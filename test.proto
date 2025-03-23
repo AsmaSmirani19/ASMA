@@ -1,0 +1,20 @@
+﻿syntax = "proto3";
+
+package testpb;
+
+option go_package = "./testpb";
+
+
+message QoSTestRequest {
+  string test_id = 1;
+  string test_parameters = 2;
+}
+
+message QoSTestResponse {
+  string status = 1;
+  string result = 2;
+}
+
+service TestService {
+  rpc RunQoSTest (QoSTestRequest) returns (QoSTestResponse); 
+}
