@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"mon-projet-go/testpb"
+	"net"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -64,7 +65,7 @@ type StopSessionPacket struct {
 }
 
 // Fonction pour sérialiser un paquet
-func SerializePacket(packet *SessionRequestPacket) ([]byte, error) {
+func SerializePacket(packet *SendSessionRequestPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	err := binary.Write(buf, binary.BigEndian, packet.SenderAddress)
@@ -92,10 +93,7 @@ func SerializePacket(packet *SessionRequestPacket) ([]byte, error) {
 // fonction pour la sérialition accept session
 func SerializeAcceptPacket(packet *SessionAcceptPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, packet.SenderAddress)
-	if err != nil {
-		return nil, err
-	}
+
 	fields := []interface{}{
 		packet.Accept,
 		packet.MBZ,
@@ -117,10 +115,7 @@ func SerializeAcceptPacket(packet *SessionAcceptPacket) ([]byte, error) {
 // fonction pour la sérialition start session
 func SerializeStartPacket(packet *StartSessionPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, packet.SenderAddress)
-	if err != nil {
-		return nil, err
-	}
+
 	fields := []interface{}{
 		packet.MBZ,
 		packet.HMAC,
@@ -138,10 +133,7 @@ func SerializeStartPacket(packet *StartSessionPacket) ([]byte, error) {
 // fonction pour la sérialition start session ACK
 func SerializeStartACKtPacket(packet *StartAckPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, packet.SenderAddress)
-	if err != nil {
-		return nil, err
-	}
+
 	fields := []interface{}{
 		packet.MBZ,
 		packet.HMAC,
@@ -159,10 +151,6 @@ func SerializeStartACKtPacket(packet *StartAckPacket) ([]byte, error) {
 // fonction pour la sérialition accept session
 func SerializeTwampTestPacket(packet *TwampTestPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, packet.SenderAddress)
-	if err != nil {
-		return nil, err
-	}
 
 	fields := []interface{}{
 		packet.SequenceNumber,
@@ -188,10 +176,7 @@ func SerializeTwampTestPacket(packet *TwampTestPacket) ([]byte, error) {
 // fonction pour la sérialition Stop session
 func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, packet.SenderAddress)
-	if err != nil {
-		return nil, err
-	}
+
 	fields := []interface{}{
 		packet.MBZ,
 		packet.HMAC,
@@ -206,10 +191,60 @@ func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Fonction pour gérer l'émetteur
+// SendPacket envoie un paquet via UDP vers une adresse et un port donnés
+func SendPacket(packet []byte, addr string, port int) error {
+	// Résoudre l'adresse IP et le port de destination
+	remoteAddr := &net.UDPAddr{
+		IP:   net.ParseIP(addr),
+		Port: port,
+	}
+	// Créer une connexion UDP
+	conn, err := net.DialUDP("udp", nil, remoteAddr)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// Envoyer le paquet
+	_, err = conn.Write(packet)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// receivePacket - Lit un paquet UDP
+func receivePacket() ([]byte, error) {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 5000})
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	buffer := make([]byte, 1500)
+	n, _, err := conn.ReadFromUDP(buffer)
+	return buffer[:n], err
+}
+
+// deserializeTwampTestPacket - Désérialisation TWAMP
+func deserializeTwampTestPacket(data []byte, pkt *TwampTestPacket) error {
+	if len(data) < 42 { // Taille minimale TWAMP
+		return fmt.Errorf("paquet trop court")
+	}
+
+	buf := bytes.NewReader(data)
+	return binary.Read(buf, binary.BigEndian, pkt)
+}
+
+// serializeTwampTestPacket - Sérialisation TWAMP
+func serializeTwampTestPacket(pkt *TwampTestPacket) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, pkt)
+	return buf.Bytes(), err
+}
 func handleSender() {
 	// Préparer un paquet SessionRequest
-	packet := SessionRequestPacket{
+	packet := SendSessionRequestPacket{
 		SenderAddress: [16]byte{192, 168, 1, 1}, // Exemple d'adresse IP
 		ReceiverPort:  5000,                     // Port du Reflector
 		SenderPort:    6000,                     // Port de l'émetteur
@@ -219,49 +254,74 @@ func handleSender() {
 		TypeP:         0x00, // Exemple de type de service
 	}
 
-	// 1. Envoyer le Session Request
+	// 1. Envoyer le paquet Session Request
 	fmt.Println("Envoi du paquet Session Request...")
-	err := sendSessionRequestPacket(&packet, "127.0.0.1", 5000)
+	serializedPacket, err := SerializePacket(&packet)
 	if err != nil {
-		log.Fatalf("Erreur lors de l'envoi du paquet : %v", err)
+		log.Fatalf("Erreur de sérialisation du paquet Session Request : %v", err)
 	}
+	err = SendPacket(serializedPacket, "127.0.0.1", 5000)
 
-	// 2. Attendre Start-Ack (simuler ici)
+	// 2. Attendre Accept-session (simuler ici)
+	fmt.Println("Attente de Accept-session...")
+	time.Sleep(2 * time.Second) // Simuler l'attente
+
+	// 3. Préparer le paquet Start Session
+	startSessionPacket := StartSessionPacket{
+		MBZ:  0,
+		HMAC: [16]byte{},
+	}
+	fmt.Println("Envoi du paquet Start Session...")
+	serializedStartSessionPacket, err := SerializeStartPacket(&startSessionPacket)
+	if err != nil {
+		log.Fatalf("Erreur de sérialisation du paquet Start Session : %v", err)
+	}
+	err = SendPacket(serializedStartSessionPacket, "127.0.0.1", 5000)
+
+	// 4. Attendre Start-Ack (simuler ici)
 	fmt.Println("Attente de Start-Ack...")
 	time.Sleep(2 * time.Second) // Simuler l'attente
 
-	// 3. Envoyer Start Session
-	startSessionPacket := SessionRequestPacket{
-		SenderAddress: packet.SenderAddress,
-		ReceiverPort:  packet.ReceiverPort,
-		SenderPort:    packet.SenderPort,
-		PaddingLength: 0,
-		StartTime:     uint32(time.Now().Unix()),
-		Timeout:       30,
-		TypeP:         0x01, // Type de service pour Start Session
+	//5.Preparer le paquet twamp-test
+	twamp_testpaquet := TwampTestPacket{
+		SequenceNumber:        0,
+		Timestamp:             uint64(time.Now().UnixNano()),
+		ErrorEstimation:       0,
+		MBZ:                   0,
+		ReceptionTimestamp:    0,
+		SenderSequenceNumber:  5,
+		SenderTimestamp:       uint64(time.Now().UnixNano()),
+		SenderErrorEstimation: 0,
+		SenderTTL:             255,
+		Padding:               make([]byte, 20),
 	}
-	fmt.Println("Envoi du paquet Start Session...")
-	err = sendSessionRequestPacket(&startSessionPacket, "127.0.0.1", 5000)
+	fmt.Println("Envoi de paquet twaamp-test...")
+	serializeTwampTestPacket, err := SerializeTwampTestPacket(&twamp_testpaquet)
 	if err != nil {
-		log.Fatalf("Erreur lors de l'envoi du Start Session : %v", err)
+		log.Fatalf("Erreur de sérialisation du paquet Start Session : %v", err)
+	}
+	err = SendPacket(serializeTwampTestPacket, "127.0.0.1", 5000)
+	if err != nil {
+		log.Fatalf("Erreur lors de l'envoi du paquet TWAMP-Test : %v", err)
 	}
 
-	// 4. Attendre Stop-Ack (simuler ici)
-	fmt.Println("Attente de Stop-Ack...")
-	time.Sleep(2 * time.Second) // Simuler l'attente
+	//6.Attendre twamp-test reflecter
+	fmt.Println("Attente de reflaction du paquet twamp-test...")
+	time.Sleep(2 * time.Second)
 
-	// 5. Envoyer Stop Session
-	stopSessionPacket := SessionRequestPacket{
-		SenderAddress: packet.SenderAddress,
-		ReceiverPort:  packet.ReceiverPort,
-		SenderPort:    packet.SenderPort,
-		PaddingLength: 0,
-		StartTime:     uint32(time.Now().Unix()),
-		Timeout:       30,
-		TypeP:         0x02, // Type de service pour Stop Session
+	// 7. Préparer le paquet Stop Session
+	stopSessionPacket := StopSessionPacket{
+		Accept:           0,          // Par exemple, 0 pour indiquer un refus ou une valeur spécifique
+		MBZ:              0,          // Champ réservé (initialisé à 0)
+		NumberOfSessions: 1,          // Par exemple, 1 pour un nombre de sessions
+		HMAC:             [16]byte{}, // Initialisation du champ HMAC (avec un code ou une valeur de hachage)
 	}
 	fmt.Println("Envoi du paquet Stop Session...")
-	err = sendSessionRequestPacket(&stopSessionPacket, "127.0.0.1", 5000)
+	serializedStopSessionPacket, err := SerializeStopSession(&stopSessionPacket)
+	if err != nil {
+		log.Fatalf("Erreur de sérialisation du Stop-Ack : %v", err)
+	}
+	err = SendPacket(serializedStopSessionPacket, "127.0.0.1", 5000) // Utilisation de la fonction d'envoi correcte
 	if err != nil {
 		log.Fatalf("Erreur lors de l'envoi du Stop Session : %v", err)
 	}
@@ -269,52 +329,77 @@ func handleSender() {
 
 // Fonction pour gérer le Reflector
 func handleReflector() {
-	// Préparer un paquet Start-Ack à envoyer en réponse
-	packet := SessionRequestPacket{
-		SenderAddress: [16]byte{192, 168, 1, 1},
-		ReceiverPort:  5000, // Port d'écoute du Reflector
-		SenderPort:    6000,
-	}
 
 	// 1. Attendre Session Request (simuler ici)
 	fmt.Println("Attente du paquet Session Request...")
-	time.Sleep(2 * time.Second) // Simuler l'attente
+	time.Sleep(2 * time.Second)
 
-	// 2. Répondre avec Start-Ack
-	fmt.Println("Envoi du Start-Ack...")
-	startAckPacket := SessionRequestPacket{
-		SenderAddress: packet.SenderAddress,
-		ReceiverPort:  packet.ReceiverPort,
-		SenderPort:    packet.SenderPort,
-		PaddingLength: 0,
-		StartTime:     uint32(time.Now().Unix()),
-		Timeout:       30,
-		TypeP:         0x01, // Type de service pour Start-Ack
+	// 2. Répondre avec Accept-Session
+	fmt.Println("Envoi du Accept-Session ...")
+	acceptSessionPacket := SessionAcceptPacket{
+		Accept: 0, // Exemple : acceptation de la session
+		MBZ:    0, // Champ réservé, toujours égal à 0
+		HMAC:   [16]byte{},
 	}
-	err := sendSessionRequestPacket(&startAckPacket, "127.0.0.1", 6000) // Envoyer à l'émetteur
+	serializedPacket, err := SerializeAcceptPacket(&acceptSessionPacket)
+	err = SendPacket(serializedPacket, "127.0.0.1", 6000)
 	if err != nil {
-		log.Fatalf("Erreur lors de l'envoi du Start-Ack : %v", err)
+		log.Fatalf("Erreur de sérialisation du Start-Session : %v", err)
 	}
 
 	// 3. Attendre Start Session (simuler ici)
 	fmt.Println("Attente du Start Session...")
-	time.Sleep(2 * time.Second) // Simuler l'attente
+	time.Sleep(2 * time.Second)
 
-	// 4. Répondre avec Stop-Ack
-	fmt.Println("Envoi du Stop-Ack...")
-	stopAckPacket := SessionRequestPacket{
-		SenderAddress: packet.SenderAddress,
-		ReceiverPort:  packet.ReceiverPort,
-		SenderPort:    packet.SenderPort,
-		PaddingLength: 0,
-		StartTime:     uint32(time.Now().Unix()),
-		Timeout:       30,
-		TypeP:         0x02, // Type de service pour Stop-Ack
+	// 4. Répondre avec Start-Ack
+	fmt.Println("Envoi du Start-Ack...")
+	startAckPacket := StartAckPacket{
+		Accept: 0,
+		MBZ:    0,
+		HMAC:   [16]byte{},
 	}
-	err = sendSessionRequestPacket(&stopAckPacket, "127.0.0.1", 6000) // Envoyer à l'émetteur
+	serializeStartACKtPacket, err := SerializeStartACKtPacket(&startAckPacket)
 	if err != nil {
-		log.Fatalf("Erreur lors de l'envoi du Stop-Ack : %v", err)
+		log.Fatalf("Erreur de sérialisation du paquet Start-Ack  : %v", err)
 	}
+	err = SendPacket(serializeStartACKtPacket, "127.0.0.1", 5000)
+
+	//5.Attendre twamp-test
+	fmt.Println("Attente  du paquet twamp-test...")
+	time.Sleep(2 * time.Second)
+
+	//6.Rependre avec reflacted twamp-test
+	receivedData, err := receivePacket() // reçoit le paquet brut
+	if err != nil {
+		log.Fatalf("Erreur de réception: %v", err)
+	}
+
+	// Désérialiser le paquet brut en une structure
+	var receivedPacket TwampTestPacket
+	err = deserializeTwampTestPacket(receivedData, &receivedPacket)
+	if err != nil {
+		log.Fatalf("Erreur de désérialisation du paquet reçu : %v", err)
+	}
+
+	// Mettre à jour le champ ReceptionTimestamp
+	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
+
+	// Sérialiser le paquet réfléchi avec le champ mis à jour
+	fmt.Println("Réflexion du paquet TWAMP-Test...")
+	serializedtestPacket, err := SerializeTwampTestPacket(&receivedPacket)
+
+	if err != nil {
+		log.Fatalf("Erreur de sérialisation du paquet réfléchi : %v", err)
+	}
+	//Renvoi du paquet réfléchi au sender (l'IP et le port sont ceux du sender)
+	err = SendPacket(serializedtestPacket, "127.0.0.1", 6000) // Exemple d'adresse et de port
+	if err != nil {
+		log.Fatalf("Erreur lors de l'envoi du paquet réfléchi : %v", err)
+	}
+	//7.Attendre  paquet Stop-session
+	fmt.Println("Attente  du paquet twamp-test...")
+	time.Sleep(2 * time.Second)
+
 }
 
 func main() {
