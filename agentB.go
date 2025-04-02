@@ -15,49 +15,49 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Structure de paquet Request pour la session
-type SendSessionRequestPacket struct {
-	SenderAddress [16]byte // Adresse de l'émetteur (Session-Sender)
-	ReceiverPort  uint16   // Port d'écoute du Reflector (Serveur)
-	SenderPort    uint16   // Port de l'émetteur
-	PaddingLength uint32   // Taille du padding
-	StartTime     uint32   // Heure de début (timestamp quand le test commence)
-	Timeout       uint32   // Délai d'expiration de la session
-	TypeP         uint8    // Type de service (DSCP)
+// Structure des paquets:
+type SendSessionRequestPacket_B struct {
+	SenderAddress [16]byte
+	ReceiverPort  uint16
+	SenderPort    uint16
+	PaddingLength uint32
+	StartTime     uint32
+	Timeout       uint32
+	TypeP         uint8
 }
 
-type SessionAcceptPacket struct {
-	Accept         uint8    // Code d'acceptation (0 = OK, autre = erreur)
-	MBZ            uint8    // Champ réservé (Must Be Zero)
-	Port           uint16   // Port attribué par le serveur
-	ReflectedOctet [16]byte // Adresse IP renvoyée par le serveur
-	ServerOctets   [16]byte // Adresse IP du serveur
-	SID            uint32   // Session ID unique
-	HMAC           [16]byte // Code d'authentification HMAC
+type SessionAcceptPacket_B struct {
+	Accept         uint8
+	MBZ            uint8
+	Port           uint16
+	ReflectedOctet [16]byte
+	ServerOctets   [16]byte
+	SID            uint32
+	HMAC           [16]byte
 }
-type StartSessionPacket struct {
+type StartSessionPacket_B struct {
 	MBZ  uint8
 	HMAC [16]byte
 }
-type StartAckPacket struct {
+type StartAckPacket_B struct {
 	Accept uint8
 	MBZ    uint8
 	HMAC   [16]byte
 }
 
-type TwampTestPacket struct {
-	SequenceNumber        uint32 // Numéro de séquence du paquet
-	Timestamp             uint64 // Timestamp d'envoi (format NTP)
-	ErrorEstimation       uint16 // Estimation d'erreur du timestamp
-	MBZ                   uint16 // Must Be Zero (champ réservé, toujours 0)
-	ReceptionTimestamp    uint64 // Timestamp de réception du paquet (format NTP)
-	SenderSequenceNumber  uint32 // Numéro de séquence côté émetteur
-	SenderTimestamp       uint64 // Timestamp d'envoi par l'émetteur (format NTP)
-	SenderErrorEstimation uint16 // Estimation d'erreur côté émetteur
-	SenderTTL             uint8  // Time-To-Live (TTL) du paquet
-	Padding               []byte // Padding optionnel pour ajuster la taille du paquet
+type TwampTestPacket_B struct {
+	SequenceNumber        uint32
+	Timestamp             uint64
+	ErrorEstimation       uint16
+	MBZ                   uint16
+	ReceptionTimestamp    uint64
+	SenderSequenceNumber  uint32
+	SenderTimestamp       uint64
+	SenderErrorEstimation uint16
+	SenderTTL             uint8
+	Padding               []byte
 }
-type StopSessionPacket struct {
+type StopSessionPacket_B struct {
 	Accept           uint8
 	MBZ              uint8
 	NumberOfSessions uint8
@@ -65,7 +65,7 @@ type StopSessionPacket struct {
 }
 
 // Fonction pour sérialiser un paquet
-func SerializePacket(packet *SendSessionRequestPacket) ([]byte, error) {
+func SerializePacket_B(packet *SendSessionRequestPacket_B) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	err := binary.Write(buf, binary.BigEndian, packet.SenderAddress)
@@ -91,7 +91,7 @@ func SerializePacket(packet *SendSessionRequestPacket) ([]byte, error) {
 }
 
 // fonction pour la sérialition accept session
-func SerializeAcceptPacket(packet *SessionAcceptPacket) ([]byte, error) {
+func SerializeAcceptPacket_B(packet *SessionAcceptPacket_B) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	fields := []interface{}{
@@ -113,7 +113,7 @@ func SerializeAcceptPacket(packet *SessionAcceptPacket) ([]byte, error) {
 }
 
 // fonction pour la sérialition start session
-func SerializeStartPacket(packet *StartSessionPacket) ([]byte, error) {
+func SerializeStartPacket_B(packet *StartSessionPacket_B) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	fields := []interface{}{
@@ -131,7 +131,7 @@ func SerializeStartPacket(packet *StartSessionPacket) ([]byte, error) {
 }
 
 // fonction pour la sérialition start session ACK
-func SerializeStartACKtPacket(packet *StartAckPacket) ([]byte, error) {
+func SerializeStartACKtPacket_B(packet *StartAckPacket_B) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	fields := []interface{}{
@@ -149,7 +149,7 @@ func SerializeStartACKtPacket(packet *StartAckPacket) ([]byte, error) {
 }
 
 // fonction pour la sérialition accept session
-func SerializeTwampTestPacket(packet *TwampTestPacket) ([]byte, error) {
+func SerializeTwampTestPacket_B(packet *TwampTestPacket_B) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	fields := []interface{}{
@@ -174,7 +174,7 @@ func SerializeTwampTestPacket(packet *TwampTestPacket) ([]byte, error) {
 }
 
 // fonction pour la sérialition Stop session
-func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
+func SerializeStopSession_B(packet *StopSessionPacket_B) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	fields := []interface{}{
@@ -192,7 +192,7 @@ func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
 }
 
 // SendPacket envoie un paquet via UDP vers une adresse et un port donnés
-func SendPacket(packet []byte, addr string, port int) error {
+func SendPacket_B(packet []byte, addr string, port int) error {
 	// Résoudre l'adresse IP et le port de destination
 	remoteAddr := &net.UDPAddr{
 		IP:   net.ParseIP(addr),
@@ -214,7 +214,7 @@ func SendPacket(packet []byte, addr string, port int) error {
 }
 
 // receivePacket - Lit un paquet UDP
-func receivePacket() ([]byte, error) {
+func receivePacket_B() ([]byte, error) {
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 5000})
 	if err != nil {
 		return nil, err
@@ -227,7 +227,7 @@ func receivePacket() ([]byte, error) {
 }
 
 // deserializeTwampTestPacket - Désérialisation TWAMP
-func deserializeTwampTestPacket(data []byte, pkt *TwampTestPacket) error {
+func deserializeTwampTestPacket_B(data []byte, pkt *TwampTestPacket_B) error {
 	if len(data) < 42 { // Taille minimale TWAMP
 		return fmt.Errorf("paquet trop court")
 	}
@@ -236,54 +236,48 @@ func deserializeTwampTestPacket(data []byte, pkt *TwampTestPacket) error {
 	return binary.Read(buf, binary.BigEndian, pkt)
 }
 
-// serializeTwampTestPacket - Sérialisation TWAMP
-func serializeTwampTestPacket(pkt *TwampTestPacket) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, pkt)
-	return buf.Bytes(), err
-}
-func handleSender() {
+func handleSender_B() {
 	// Préparer un paquet SessionRequest
-	packet := SendSessionRequestPacket{
-		SenderAddress: [16]byte{192, 168, 1, 1}, // Exemple d'adresse IP
-		ReceiverPort:  5000,                     // Port du Reflector
-		SenderPort:    6000,                     // Port de l'émetteur
+	packet := SendSessionRequestPacket_B{
+		SenderAddress: [16]byte{192, 168, 1, 1},
+		ReceiverPort:  5000,
+		SenderPort:    6000,
 		PaddingLength: 0,
 		StartTime:     uint32(time.Now().Unix()),
 		Timeout:       30,
-		TypeP:         0x00, // Exemple de type de service
+		TypeP:         0x00,
 	}
 
 	// 1. Envoyer le paquet Session Request
 	fmt.Println("Envoi du paquet Session Request...")
-	serializedPacket, err := SerializePacket(&packet)
+	serializedPacket, err := SerializePacket_B(&packet)
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet Session Request : %v", err)
 	}
-	err = SendPacket(serializedPacket, "127.0.0.1", 5000)
+	err = SendPacket_B(serializedPacket, "127.0.0.1", 5000)
 
 	// 2. Attendre Accept-session (simuler ici)
 	fmt.Println("Attente de Accept-session...")
 	time.Sleep(2 * time.Second) // Simuler l'attente
 
 	// 3. Préparer le paquet Start Session
-	startSessionPacket := StartSessionPacket{
+	startSessionPacket := StartSessionPacket_B{
 		MBZ:  0,
 		HMAC: [16]byte{},
 	}
 	fmt.Println("Envoi du paquet Start Session...")
-	serializedStartSessionPacket, err := SerializeStartPacket(&startSessionPacket)
+	serializedStartSessionPacket, err := SerializeStartPacket_B(&startSessionPacket)
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet Start Session : %v", err)
 	}
-	err = SendPacket(serializedStartSessionPacket, "127.0.0.1", 5000)
+	err = SendPacket_B(serializedStartSessionPacket, "127.0.0.1", 5000)
 
 	// 4. Attendre Start-Ack (simuler ici)
 	fmt.Println("Attente de Start-Ack...")
 	time.Sleep(2 * time.Second) // Simuler l'attente
 
 	//5.Preparer le paquet twamp-test
-	twamp_testpaquet := TwampTestPacket{
+	twamp_testpaquet := TwampTestPacket_B{
 		SequenceNumber:        0,
 		Timestamp:             uint64(time.Now().UnixNano()),
 		ErrorEstimation:       0,
@@ -296,11 +290,11 @@ func handleSender() {
 		Padding:               make([]byte, 20),
 	}
 	fmt.Println("Envoi de paquet twaamp-test...")
-	serializeTwampTestPacket, err := SerializeTwampTestPacket(&twamp_testpaquet)
+	serializeTwampTestPacket, err := SerializeTwampTestPacket_B(&twamp_testpaquet)
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet Start Session : %v", err)
 	}
-	err = SendPacket(serializeTwampTestPacket, "127.0.0.1", 5000)
+	err = SendPacket_B(serializeTwampTestPacket, "127.0.0.1", 5000)
 	if err != nil {
 		log.Fatalf("Erreur lors de l'envoi du paquet TWAMP-Test : %v", err)
 	}
@@ -310,25 +304,25 @@ func handleSender() {
 	time.Sleep(2 * time.Second)
 
 	// 7. Préparer le paquet Stop Session
-	stopSessionPacket := StopSessionPacket{
-		Accept:           0,          // Par exemple, 0 pour indiquer un refus ou une valeur spécifique
-		MBZ:              0,          // Champ réservé (initialisé à 0)
-		NumberOfSessions: 1,          // Par exemple, 1 pour un nombre de sessions
-		HMAC:             [16]byte{}, // Initialisation du champ HMAC (avec un code ou une valeur de hachage)
+	stopSessionPacket := StopSessionPacket_B{
+		Accept:           0,
+		MBZ:              0,
+		NumberOfSessions: 1,
+		HMAC:             [16]byte{},
 	}
 	fmt.Println("Envoi du paquet Stop Session...")
-	serializedStopSessionPacket, err := SerializeStopSession(&stopSessionPacket)
+	serializedStopSessionPacket, err := SerializeStopSession_B(&stopSessionPacket)
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du Stop-Ack : %v", err)
 	}
-	err = SendPacket(serializedStopSessionPacket, "127.0.0.1", 5000) // Utilisation de la fonction d'envoi correcte
+	err = SendPacket_B(serializedStopSessionPacket, "127.0.0.1", 5000)
 	if err != nil {
 		log.Fatalf("Erreur lors de l'envoi du Stop Session : %v", err)
 	}
 }
 
 // Fonction pour gérer le Reflector
-func handleReflector() {
+func handleReflector_B() {
 
 	// 1. Attendre Session Request (simuler ici)
 	fmt.Println("Attente du paquet Session Request...")
@@ -336,13 +330,13 @@ func handleReflector() {
 
 	// 2. Répondre avec Accept-Session
 	fmt.Println("Envoi du Accept-Session ...")
-	acceptSessionPacket := SessionAcceptPacket{
-		Accept: 0, // Exemple : acceptation de la session
-		MBZ:    0, // Champ réservé, toujours égal à 0
+	acceptSessionPacket := SessionAcceptPacket_B{
+		Accept: 0,
+		MBZ:    0,
 		HMAC:   [16]byte{},
 	}
-	serializedPacket, err := SerializeAcceptPacket(&acceptSessionPacket)
-	err = SendPacket(serializedPacket, "127.0.0.1", 6000)
+	serializedPacket, err := SerializeAcceptPacket_B(&acceptSessionPacket)
+	err = SendPacket_B(serializedPacket, "127.0.0.1", 6000)
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du Start-Session : %v", err)
 	}
@@ -353,30 +347,30 @@ func handleReflector() {
 
 	// 4. Répondre avec Start-Ack
 	fmt.Println("Envoi du Start-Ack...")
-	startAckPacket := StartAckPacket{
+	startAckPacket := StartAckPacket_B{
 		Accept: 0,
 		MBZ:    0,
 		HMAC:   [16]byte{},
 	}
-	serializeStartACKtPacket, err := SerializeStartACKtPacket(&startAckPacket)
+	serializeStartACKtPacket, err := SerializeStartACKtPacket_B(&startAckPacket)
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet Start-Ack  : %v", err)
 	}
-	err = SendPacket(serializeStartACKtPacket, "127.0.0.1", 5000)
+	err = SendPacket_B(serializeStartACKtPacket, "127.0.0.1", 5000)
 
 	//5.Attendre twamp-test
 	fmt.Println("Attente  du paquet twamp-test...")
 	time.Sleep(2 * time.Second)
 
 	//6.Rependre avec reflacted twamp-test
-	receivedData, err := receivePacket() // reçoit le paquet brut
+	receivedData, err := receivePacket_B() // reçoit le paquet brut
 	if err != nil {
 		log.Fatalf("Erreur de réception: %v", err)
 	}
 
 	// Désérialiser le paquet brut en une structure
-	var receivedPacket TwampTestPacket
-	err = deserializeTwampTestPacket(receivedData, &receivedPacket)
+	var receivedPacket TwampTestPacket_B
+	err = deserializeTwampTestPacket_B(receivedData, &receivedPacket)
 	if err != nil {
 		log.Fatalf("Erreur de désérialisation du paquet reçu : %v", err)
 	}
@@ -386,13 +380,13 @@ func handleReflector() {
 
 	// Sérialiser le paquet réfléchi avec le champ mis à jour
 	fmt.Println("Réflexion du paquet TWAMP-Test...")
-	serializedtestPacket, err := SerializeTwampTestPacket(&receivedPacket)
+	serializedtestPacket, err := SerializeTwampTestPacket_B(&receivedPacket)
 
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet réfléchi : %v", err)
 	}
 	//Renvoi du paquet réfléchi au sender (l'IP et le port sont ceux du sender)
-	err = SendPacket(serializedtestPacket, "127.0.0.1", 6000) // Exemple d'adresse et de port
+	err = SendPacket_B(serializedtestPacket, "127.0.0.1", 6000) // Exemple d'adresse et de port
 	if err != nil {
 		log.Fatalf("Erreur lors de l'envoi du paquet réfléchi : %v", err)
 	}
@@ -404,16 +398,9 @@ func handleReflector() {
 
 func main() {
 
-	// Déterminer le rôle de l'agent (ici, un simple flag pour l'exemple)
-	isSender := true // Modifier cette valeur pour tester l'autre rôle (Reflector)
+	go handleSender_B()
+	go handleReflector_B()
 
-	if isSender {
-		// Si l'agent est un Sender, gérer en conséquence
-		handleSender()
-	} else {
-		// Si l'agent est un Reflector, gérer en conséquence
-		handleReflector()
-	}
 	// Connexion au serveur gRPC
 	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
