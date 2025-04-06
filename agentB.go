@@ -8,12 +8,29 @@ import (
 	"log"
 	"mon-projet-go/testpb"
 	"net"
+
 	"time"
 
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+const (
+	SENDER_PORT    = 6000
+	REFLECTOR_PORT = 5000
+)
+
+type Metrics struct {
+	SentPackets        int
+	ReceivedPackets    int
+	TotalBytesSent     int64
+	TotalBytesReceived int64
+	LastLatency        int64
+	TotalJitter        int64
+	StartTime          time.Time
+	LatencySamples     []int64
+}
 
 // Structure des paquets:
 type SendSessionRequestPacket_B struct {
@@ -51,7 +68,7 @@ type TwampTestPacket_B struct {
 	ErrorEstimation       uint16
 	MBZ                   uint16
 	ReceptionTimestamp    uint64
-	SenderSequenceNumber  uint32
+	SenderSequenceNumber  uint64
 	SenderTimestamp       uint64
 	SenderErrorEstimation uint16
 	SenderTTL             uint8
@@ -236,7 +253,13 @@ func deserializeTwampTestPacket_B(data []byte, pkt *TwampTestPacket_B) error {
 	return binary.Read(buf, binary.BigEndian, pkt)
 }
 
-func handleSender_B() {
+func handleSender_B(metrics *Metrics) {
+
+	// Initialisation des variables pour la mesure
+	var totalLatency int64
+	var totalJitter int64
+	var previousLatency int64
+
 	// Préparer un paquet SessionRequest
 	packet := SendSessionRequestPacket_B{
 		SenderAddress: [16]byte{192, 168, 1, 1},
@@ -302,6 +325,46 @@ func handleSender_B() {
 	//6.Attendre twamp-test reflecter
 	fmt.Println("Attente de reflaction du paquet twamp-test...")
 	time.Sleep(2 * time.Second)
+	// 7. Réception du paquet TWAMP-Test réfléchi et calcul de la latence
+	receivedData, err := receivePacket_B() // reçoit le paquet brut
+	if err != nil {
+		log.Fatalf("Erreur de réception: %v", err)
+	}
+	// Désérialiser le paquet reçu
+	var receivedPacket TwampTestPacket_B
+	err = deserializeTwampTestPacket_B(receivedData, &receivedPacket)
+	if err != nil {
+		log.Fatalf("Erreur de désérialisation du paquet reçu : %v", err)
+	}
+	// Mettre à jour le timestamp de réception
+	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
+	// Calcul de la latence (différence entre le timestamp d'envoi et de réception)
+	latency := int64(receivedPacket.ReceptionTimestamp - (receivedPacket.SenderTimestamp))
+	totalLatency += latency
+	metrics.LatencySamples = append(metrics.LatencySamples, latency)
+	metrics.LastLatency = latency
+	metrics.ReceivedPackets++
+
+	// Calcul du jitter
+	if len(metrics.LatencySamples) > 1 {
+		// Calcul de la différence avec le paquet précédent
+		jitter := int64(latency - previousLatency)
+		totalJitter += jitter
+	}
+	previousLatency = latency
+
+	// Calcul de la bande passante (supposons que vous envoyez 1024 octets par paquet)
+	metrics.TotalBytesReceived += 1024
+	metrics.TotalBytesSent += 1024
+
+	// Calcul de la perte de paquets (on peut calculer le taux de perte)
+	packetLoss := float64(metrics.SentPackets-metrics.ReceivedPackets) / float64(metrics.SentPackets) * 100
+
+	// Affichage des résultats
+	fmt.Printf("Latence: %d ms\n", latency/1000000)    // Convertir en millisecondes
+	fmt.Printf("Jitter: %d ms\n", totalJitter/1000000) // Convertir en millisecondes
+	fmt.Printf("Bande passante: %d octets\n", metrics.TotalBytesReceived)
+	fmt.Printf("Perte de paquets: %.2f%%\n", packetLoss)
 
 	// 7. Préparer le paquet Stop Session
 	stopSessionPacket := StopSessionPacket_B{
@@ -319,6 +382,7 @@ func handleSender_B() {
 	if err != nil {
 		log.Fatalf("Erreur lors de l'envoi du Stop Session : %v", err)
 	}
+
 }
 
 // Fonction pour gérer le Reflector
@@ -398,7 +462,12 @@ func handleReflector_B() {
 
 func main() {
 
-	go handleSender_B()
+	// Création d'une variable de type Metrics
+	metrics := Metrics{ /* initialisation des champs ici */ }
+
+	// Appel de la fonction en passant un pointeur vers metrics
+	handleSender_B(&metrics)
+
 	go handleReflector_B()
 
 	// Connexion au serveur gRPC

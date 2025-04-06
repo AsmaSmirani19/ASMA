@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/http"
 
-	"mon-projet-go/testpb"
+	"mon-projet-go/testpb" // Assurez-vous que ce chemin est correct pour votre projet
 
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
@@ -21,14 +21,17 @@ type server struct {
 // Méthode gRPC pour envoyer un test QoS aux agents
 func (s *server) RunQoSTest(ctx context.Context, req *testpb.QoSTestRequest) (*testpb.QoSTestResponse, error) {
 	log.Printf("Envoi du test QoS : %s avec config: %s", req.TestId, req.TestParameters)
+	// Retourner une réponse avec des résultats fictifs
 	return &testpb.QoSTestResponse{
 		Status: "Réussi",       // Statut du test
 		Result: "Latence 10ms", // Résultats du test
 	}, nil
-
 }
 
-var upgrader = websocket.Upgrader{}
+// WebSocket : gestion des messages entrants
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true }, // Permet d'accepter les connexions cross-origin
+}
 
 // Serveur WebSocket pour recevoir les résultats
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +48,13 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			log.Println("Erreur de lecture WebSocket:", err)
 			break
 		}
+		// Afficher le message reçu de l'agent
 		fmt.Println("Résultat reçu de l'agent :", string(msg))
+		// Envoyer une réponse au client WebSocket
+		if err := conn.WriteMessage(websocket.TextMessage, []byte("Message reçu avec succès")); err != nil {
+			log.Println("Erreur lors de l'envoi de message WebSocket:", err)
+			break
+		}
 	}
 }
 
@@ -67,7 +76,9 @@ func main() {
 	}()
 
 	log.Println("Serveur gRPC démarré sur le port 50051...")
+
+	// Démarrer le serveur gRPC
 	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Échec du démarrage du serveur : %v", err)
+		log.Fatalf("Échec du démarrage du serveur gRPC : %v", err)
 	}
 }
