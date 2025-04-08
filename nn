@@ -1,0 +1,157 @@
+// Préparer un paquet SessionRequest
+	packet := SendSessionRequestPacket{
+		SenderAddress: func() [16]byte {
+			var ip [16]byte
+			copy(ip[:], net.ParseIP("127.0.0.1").To16())
+			return ip
+		}(),
+		ReceiverPort:  5000,
+		SenderPort:    6000,
+		PaddingLength: 0,
+		StartTime:     uint32(time.Now().Unix()),
+		Timeout:       30,
+		TypeP:         0x00,
+	}
+
+	// 1. Envoyer le paquet Session Request
+	fmt.Println("Envoi du paquet Session Request...")
+	serializedPacket, err := SerializePacket(&packet)
+	if err != nil {
+		log.Fatalf("Erreur de sérialisation du paquet Session-Request : %v", err)
+	}
+	err = SendPacket(serializedPacket, "127.0.0.1", 5000)
+	if err != nil {
+		log.Fatalf("Erreur lors de l'envoi du paquet Session-Request : %v", err)
+	}
+	
+	// 2. Réception du paquet Accept-session et validation
+	receivedData, err := receivePacket()
+	if err != nil {
+		log.Fatalf("Erreur lors de la réception d'Accept-session : %v", err)
+	}
+	if !validateSessionAcceptResponse(receivedData) {
+		log.Fatalf("Réponse d'Accept-session invalide ou erreur serveur")
+	}
+	fmt.Println("Paquet Accept-session reçu.")
+
+	// 3. Préparer le paquet Start Session
+	startSessionPacket := StartSessionPacket{
+		MBZ:  0,
+		HMAC: [16]byte{},
+	}
+	fmt.Println("Envoi du paquet Start Session...")
+	serializedStartSessionPacket, err := SerializeStartPacket(&startSessionPacket)
+	if err != nil {
+		log.Fatalf("Erreur de sérialisation du paquet Start Session : %v", err)
+	}
+	err = SendPacket(serializedStartSessionPacket, "127.0.0.1", 5000)
+	if err != nil {
+		log.Fatalf("Erreur lors de l'envoi du paquet Start Session : %v", err)
+	}
+	// 4. Réception du paquet Start-ACK et validation
+	receivedData, err = receivePacket()
+	if err != nil {
+		log.Fatalf("Erreur lors de la réception Start-ACK : %v", err)
+	}
+	if !validateStartSessionAck(receivedData) {
+		log.Fatalf("Réponse Start-ACK invalide ou erreur serveur")
+	}
+	fmt.Println("Paquet Start-ACK reçu.")
+
+	// 8. Préparer le paquet Stop Session
+	stopSessionPacket := StopSessionPacket{
+		Accept:           0,
+		MBZ:              0,
+		NumberOfSessions: 1,
+		HMAC:             [16]byte{},
+	}
+	fmt.Println("Envoi du paquet Stop Session...")
+	serializedStopSessionPacket, err := SerializeStopSession(&stopSessionPacket)
+	if err != nil {
+		log.Fatalf("Erreur de sérialisation du Stop-Ack : %v", err)
+	}
+	err = SendPacket(serializedStopSessionPacket, "127.0.01", 5000)
+	if err != nil {
+		log.Fatalf("Erreur lors de l'envoi du Stop Session : %v", err)
+	}
+
+//////////////////////////////
+	for {
+
+		// Identifier le type de paquet reçu
+		packetType := identifyPacketType(data)
+
+		switch packetType {
+		case "SessionRequest":
+			// Paquet Request-Session reçu, envoyer Accept-Session
+			log.Println("Paquet Request-Session reçu.")
+			acceptSessionPacket := SessionAcceptPacket{
+				Accept: 0,
+				MBZ:    0,
+				HMAC:   [16]byte{},
+			}
+			serializedPacket, err := SerializeAcceptPacket(&acceptSessionPacket)
+			if err != nil {
+				log.Printf("Erreur de sérialisation du paquet Accept-Session : %v", err)
+				continue
+			}
+			err = SendPacket(serializedPacket, "127.0.0.1", 5000)
+			if err != nil {
+				log.Fatalf("Erreur de sérialisation du Start-Session : %v", err)
+			}
+
+		case "StartSession":
+			// Paquet Start-Session reçu, envoyer Start-Ack
+			log.Println("Paquet Start-Session reçu.")
+			startAckPacket := StartAckPacket{
+				Accept: 0,
+				MBZ:    0,
+				HMAC:   [16]byte{},
+			}
+			serializeStartACKtPacket, err := SerializeStartACKtPacket(&startAckPacket)
+			if err != nil {
+				log.Printf("Erreur de sérialisation du paquet Start-Ack : %v", err)
+				continue
+			}
+			err = SendPacket(serializeStartACKtPacket, "127.0.0.1", 5000)
+			if err != nil {
+				log.Fatalf("Erreur de sérialisation du paquet Start-Ack  : %v", err)
+			}
+		}
+
+		case "StopSession":
+		log.Println("Paquet Stop-Session reçu.")
+		// Tu peux ajouter des actions supplémentaires ici, si nécessaire
+
+		default:
+		// Paquet inconnu reçu
+		log.Println("Paquet inconnu reçu.")
+	}
+
+// Exemple de construction du paquet Accept-Session
+func buildAcceptSessionPacket() []byte {
+	acceptSessionPacket := SessionAcceptPacket{
+		Accept: 0,
+		MBZ:    0,
+		HMAC:   [16]byte{},
+	}
+	serializedPacket, err := SerializeAcceptPacket(&acceptSessionPacket)
+	if err != nil {
+		log.Fatalf("Erreur de sérialisation du paquet Accept-Session : %v", err)
+	}
+	return serializedPacket
+}
+
+// Exemple de construction du paquet Start-Ack
+func buildStartAckPacket() []byte {
+	startAckPacket := StartAckPacket{
+		Accept: 0,
+		MBZ:    0,
+		HMAC:   [16]byte{},
+	}
+	serializedPacket, err := SerializeStartACKtPacket(&startAckPacket)
+	if err != nil {
+		log.Fatalf("Erreur de sérialisation du paquet Start-Ack : %v", err)
+	}
+	return serializedPacket
+}
