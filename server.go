@@ -8,11 +8,12 @@ import (
 	"log"
 	"mon-projet-go/testpb"
 	"net"
-	"net/http"
+
 	"time"
 
-	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
+
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // structure des paquets
@@ -148,39 +149,39 @@ func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
-func SendPacket_(packet []byte, addr string, port int) error {
-    conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
-    if err != nil {
-        return err
-    }
-    defer conn.Close()
+func SendTCPPacket(packet []byte, addr string, port int) error {
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
 
-    _, err = conn.Write(packet)
-    if err != nil {
-        return err
-    }
+	_, err = conn.Write(packet)
+	if err != nil {
+		return err
+	}
 
-    return nil
+	return nil
 }
 
-// Lit un paquet UDP
-func receivePacket_() ([]byte, error) {
-    listener, err := net.Listen("tcp", ":5000")
-    if err != nil {
-        return nil, err
-    }
-    defer listener.Close()
-    conn, err := listener.Accept()
-    if err != nil {
-        return nil, err
-    }
-    defer conn.Close()
-    buffer := make([]byte, 1500)
-    n, err := conn.Read(buffer)
-    if err != nil {
-        return nil, err
-    }
-    return buffer[:n], nil
+// receivePacket_ reçoit un paquet via TCP
+func receiveTCPPacket() ([]byte, error) {
+	listener, err := net.Listen("tcp", ":60000")
+	if err != nil {
+		return nil, err
+	}
+	defer listener.Close()
+	conn, err := listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	buffer := make([]byte, 1500)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		return nil, err
+	}
+	return buffer[:n], nil
 }
 
 func identifyPacketType(data []byte) string {
@@ -216,13 +217,12 @@ func client() {
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet Session-Request : %v", err)
 	}
-	if err := SendPacket_(serializedPacket, "127.0.0.1", 5000)
-	err != nil {
+	if err := SendTCPPacket(serializedPacket, "127.0.0.1", 60001); err != nil {
 		log.Fatalf("Erreur envoi Session-Request : %v", err)
 	}
 
 	// 2. Réception du paquet Accept-session
-	receivedData, err := receivePacket_()
+	receivedData, err := receiveTCPPacket()
 	if err != nil {
 		log.Fatalf("Erreur lors de la réception d'Accept-session : %v", err)
 	}
@@ -238,11 +238,11 @@ func client() {
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet Start Session : %v", err)
 	}
-	if err = SendPacket(serializedStartSessionPacket, "127.0.0.1", 5000); err != nil {
+	if err = SendTCPPacket(serializedStartSessionPacket, "127.0.0.1", 60001); err != nil {
 		log.Fatalf("Erreur lors de l'envoi du paquet Start Session : %v", err)
 	}
 	// 4. Réception du paquet Start-ACK et validation
-	receivedData, err = receivePacket()
+	receivedData, err = receiveTCPPacket()
 	if err != nil {
 		log.Fatalf("Erreur lors de la réception Start-ACK : %v", err)
 	}
@@ -259,20 +259,20 @@ func client() {
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du Stop-Ack : %v", err)
 	}
-	if err = SendPacket(serializedStopSessionPacket, "127.0.0.1", 5000); err != nil {
+	if err = SendTCPPacket(serializedStopSessionPacket, "127.0.0.1", 60001); err != nil {
 		log.Fatalf("Erreur lors de l'envoi du Stop Session : %v", err)
 	}
 }
 
-func Server() {
-	// Démarrer un serveur TCP sur le port 5000
-	listener, err := net.Listen("tcp", ":5000")
+func Serveur() {
+	// Démarrer un serveur TCP sur le port 5001
+	listener, err := net.Listen("tcp", ":60000")
 	if err != nil {
 		log.Fatalf("Erreur de serveur TCP : %v", err)
 	}
 	defer listener.Close()
 
-	log.Println("Serveur en attente de connexions sur le port 5000...")
+	log.Println("Serveur en attente de connexions sur le port 60000...")
 
 	for {
 		// Accepter une nouvelle connexion
@@ -293,8 +293,6 @@ func Server() {
 			}
 			data := buf[:n]
 			packetType := identifyPacketType(data)
-
-	
 
 			switch packetType {
 			case "SessionRequest":
@@ -344,56 +342,76 @@ func Server() {
 		}(conn)
 	}
 }
-	
-
-
 
 // Implémentation du service gRPC
 type server struct {
 	testpb.UnimplementedTestServiceServer
 }
 
-// Méthode gRPC pour envoyer un test QoS aux agents
-func (s *server) RunQoSTest(ctx context.Context, req *testpb.QoSTestRequest) (*testpb.QoSTestResponse, error) {
-	log.Printf("Envoi du test QoS : %s avec config: %s", req.TestId, req.TestParameters)
-	// Retourner une réponse avec des résultats fictifs
-	return &testpb.QoSTestResponse{
-		Status: "Réussi",       // Statut du test
-		Result: "Latence 10ms", // Résultats du test
-	}, nil
-}
+// Implémentation du serveur qui lance le test dès la connexion avec l'agent
+func (s *server) startTestWithAgent() {
+	const (
+		initialReconnectDelay = 1 * time.Second
+		maxReconnectDelay     = 30 * time.Second
+		connectionTimeout     = 10 * time.Second
+	)
 
-// WebSocket : gestion des messages entrants
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true }, // Permet d'accepter les connexions cross-origin
-}
-
-// Serveur WebSocket pour recevoir les résultats
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Erreur WebSocket:", err)
-		return
-	}
-	defer conn.Close()
+	var reconnectDelay time.Duration = initialReconnectDelay
 
 	for {
-		_, msg, err := conn.ReadMessage()
+		// Création d'un contexte avec timeout pour la connexion
+		connCtx, connCancel := context.WithTimeout(context.Background(), connectionTimeout)
+		conn, err := grpc.DialContext(
+			connCtx,
+			"localhost:50051", // Adresse de l'agent
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithBlock(),
+		)
+		connCancel() // Libérer les ressources du contexte
+
 		if err != nil {
-			log.Println("Erreur de lecture WebSocket:", err)
-			break
+			log.Printf("Connexion impossible: %v - Nouvelle tentative dans %v", err, reconnectDelay)
+			time.Sleep(reconnectDelay)
+
+			// Backoff exponentiel
+			reconnectDelay = min(reconnectDelay*2, maxReconnectDelay)
+			continue
 		}
-		// Afficher le message reçu de l'agent
-		fmt.Println("Résultat reçu de l'agent :", string(msg))
-		// Envoyer une réponse au client WebSocket
-		if err := conn.WriteMessage(websocket.TextMessage, []byte("Message reçu avec succès")); err != nil {
-			log.Println("Erreur lors de l'envoi de message WebSocket:", err)
-			break
+
+		// Réinitialiser le délai de reconnexion après une connexion réussie
+		reconnectDelay = initialReconnectDelay
+
+		client := testpb.NewTestServiceClient(conn)
+
+		// Envoi immédiat d'une commande de test à l'agent
+		testCommand := &testpb.TestCommand{
+			TestId:     "START_TEST",
+			Parameters: "test_parameters_here", // Paramètres du test (exemple)
 		}
+
+		res, err := client.StreamTestCommands(context.Background(), testCommand)
+		if err != nil {
+			log.Printf("Erreur lors de l'exécution du test: %v", err)
+			conn.Close()
+			continue
+		}
+
+		log.Printf("Test lancé avec succès. Résultat: %s, Statut: %s", res.Result)
+
+		conn.Close()
 	}
+}
+
+// Fonction utilitaire pour la valeur minimale
+func min1(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func main() {
+
 	// Démarrage du serveur gRPC
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
@@ -403,13 +421,9 @@ func main() {
 	grpcServer := grpc.NewServer()
 	testpb.RegisterTestServiceServer(grpcServer, &server{})
 
-	// Lancer le serveur WebSocket en parallèle
-	go func() {
-		http.HandleFunc("/ws", handleWebSocket)
-		log.Println("Serveur WebSocket sur le port 8080...")
-		log.Fatal(http.ListenAndServe(":8080", nil))
-	}()
-	go Server()
+	go StartWebSocketServer()
+
+	go Serveur()
 	go client()
 
 	log.Println("Serveur gRPC démarré sur le port 50051...")

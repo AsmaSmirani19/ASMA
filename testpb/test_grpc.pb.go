@@ -22,7 +22,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type TestServiceClient interface {
-	RunQoSTest(ctx context.Context, in *QoSTestRequest, opts ...grpc.CallOption) (*QoSTestResponse, error)
+	StreamTestCommands(ctx context.Context, in *TestCommand, opts ...grpc.CallOption) (TestService_StreamTestCommandsClient, error)
 }
 
 type testServiceClient struct {
@@ -33,20 +33,43 @@ func NewTestServiceClient(cc grpc.ClientConnInterface) TestServiceClient {
 	return &testServiceClient{cc}
 }
 
-func (c *testServiceClient) RunQoSTest(ctx context.Context, in *QoSTestRequest, opts ...grpc.CallOption) (*QoSTestResponse, error) {
-	out := new(QoSTestResponse)
-	err := c.cc.Invoke(ctx, "/testpb.TestService/RunQoSTest", in, out, opts...)
+func (c *testServiceClient) StreamTestCommands(ctx context.Context, in *TestCommand, opts ...grpc.CallOption) (TestService_StreamTestCommandsClient, error) {
+	stream, err := c.cc.NewStream(ctx, &TestService_ServiceDesc.Streams[0], "/testpb.TestService/StreamTestCommands", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &testServiceStreamTestCommandsClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type TestService_StreamTestCommandsClient interface {
+	Recv() (*TestResponse, error)
+	grpc.ClientStream
+}
+
+type testServiceStreamTestCommandsClient struct {
+	grpc.ClientStream
+}
+
+func (x *testServiceStreamTestCommandsClient) Recv() (*TestResponse, error) {
+	m := new(TestResponse)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // TestServiceServer is the server API for TestService service.
 // All implementations must embed UnimplementedTestServiceServer
 // for forward compatibility
 type TestServiceServer interface {
-	RunQoSTest(context.Context, *QoSTestRequest) (*QoSTestResponse, error)
+	StreamTestCommands(*TestCommand, TestService_StreamTestCommandsServer) error
 	mustEmbedUnimplementedTestServiceServer()
 }
 
@@ -54,8 +77,8 @@ type TestServiceServer interface {
 type UnimplementedTestServiceServer struct {
 }
 
-func (UnimplementedTestServiceServer) RunQoSTest(context.Context, *QoSTestRequest) (*QoSTestResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RunQoSTest not implemented")
+func (UnimplementedTestServiceServer) StreamTestCommands(*TestCommand, TestService_StreamTestCommandsServer) error {
+	return status.Errorf(codes.Unimplemented, "method StreamTestCommands not implemented")
 }
 func (UnimplementedTestServiceServer) mustEmbedUnimplementedTestServiceServer() {}
 
@@ -70,22 +93,25 @@ func RegisterTestServiceServer(s grpc.ServiceRegistrar, srv TestServiceServer) {
 	s.RegisterService(&TestService_ServiceDesc, srv)
 }
 
-func _TestService_RunQoSTest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QoSTestRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _TestService_StreamTestCommands_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(TestCommand)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(TestServiceServer).RunQoSTest(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/testpb.TestService/RunQoSTest",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(TestServiceServer).RunQoSTest(ctx, req.(*QoSTestRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(TestServiceServer).StreamTestCommands(m, &testServiceStreamTestCommandsServer{stream})
+}
+
+type TestService_StreamTestCommandsServer interface {
+	Send(*TestResponse) error
+	grpc.ServerStream
+}
+
+type testServiceStreamTestCommandsServer struct {
+	grpc.ServerStream
+}
+
+func (x *testServiceStreamTestCommandsServer) Send(m *TestResponse) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 // TestService_ServiceDesc is the grpc.ServiceDesc for TestService service.
@@ -94,12 +120,13 @@ func _TestService_RunQoSTest_Handler(srv interface{}, ctx context.Context, dec f
 var TestService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "testpb.TestService",
 	HandlerType: (*TestServiceServer)(nil),
-	Methods: []grpc.MethodDesc{
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "RunQoSTest",
-			Handler:    _TestService_RunQoSTest_Handler,
+			StreamName:    "StreamTestCommands",
+			Handler:       _TestService_StreamTestCommands_Handler,
+			ServerStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "test.proto",
 }

@@ -155,3 +155,172 @@ func buildStartAckPacket() []byte {
 	}
 	return serializedPacket
 }
+
+
+
+
+
+
+
+
+
+"google.golang.org/grpc/codes"
+"google.golang.org/grpc/status"
+
+
+
+
+
+
+
+
+
+
+	// Lancer le serveur WebSocket en parallèle
+	go func() {
+		http.HandleFunc("/ws", handleWebSocket)
+		log.Println("Serveur WebSocket sur le port 8080...")
+		log.Fatal(http.ListenAndServe(":8080", nil))
+	}()
+
+
+	// Serveur WebSocket pour recevoir les résultats
+func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("Erreur WebSocket:", err)
+		return
+	}
+	defer conn.Close()
+
+	
+// WebSocket : gestion des messages entrants
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+
+for {
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		log.Println("Erreur de lecture WebSocket:", err)
+		break
+	}
+	// Afficher le message reçu de l'agent
+	fmt.Println("Résultat reçu de l'agent :", string(msg))
+	// Envoyer une réponse au client WebSocket
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("Message reçu avec succès")); err != nil {
+		log.Println("Erreur lors de l'envoi de message WebSocket:", err)
+		break
+	}
+}
+
+
+
+***************agenet: fmt.Println("Test QoS reçu du serveur:", req.TestId, req.Parameters)
+
+// Attente et préparation des résultats
+testResult := fmt.Sprintf("Test ID: %s - Latence mesurée: 50ms", req.Parameters)
+
+// Connexion WebSocket au serveur
+ws, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
+if err != nil {
+	log.Fatalf("Erreur WebSocket: %v", err)
+}
+defer ws.Close()
+
+// Envoi des résultats
+err = ws.WriteMessage(websocket.TextMessage, []byte(testResult))
+if err != nil {
+	log.Fatalf("Erreur d'envoi WebSocket: %v", err)
+}
+
+fmt.Println("Résultat envoyé au serveur via WebSocket")
+
+// Nettoyage
+defer func() {
+	ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "Fin de communication"))
+	ws.Close()
+}()
+**********metrics
+// 4. Calculer les métriques finales
+if Stats.SentPackets > 0 {
+	qos.PacketLossPercent = float64(Stats.SentPackets-Stats.ReceivedPackets) / float64(Stats.SentPackets) * 100
+}
+//calcul moyenne
+if len(Stats.LatencySamples) > 0 {
+	var totalLatency int64
+	for _, lat := range Stats.LatencySamples {
+		totalLatency += lat
+	}
+	qos.AvgLatencyMs = totalLatency / int64(len(Stats.LatencySamples)) / 1e6
+	qos.AvgJitterMs = qos.TotalJitter / int64(len(Stats.LatencySamples)-1) / 1e6
+}
+
+if params.Duration.Seconds() > 0 {
+	qos.AvgThroughputKbps = float64(Stats.TotalBytesReceived*8) / params.Duration.Seconds() / 1024
+}
+SetLatestMetrics(qos)
+
+return Stats,qos, nil
+}
+
+// Struct pour les paramètres parsés
+type TestParams struct {
+TargetIP       string
+TargetPort     int
+Duration       time.Duration
+PacketInterval time.Duration
+}
+
+// Extraire  les paramètres
+func parseTestParameters(input string) (*TestParams, error) {
+params := &TestParams{
+	// Valeurs par défaut
+	TargetIP:       "127.0.0.1",
+	TargetPort:     5000,
+	Duration:       30 * time.Second,
+	PacketInterval: 1 * time.Second,
+}
+
+// Exemple de parsing simple (à adapter)
+parts := strings.Split(input, ",")
+for _, part := range parts {
+	kv := strings.Split(part, "=")
+	if len(kv) != 2 {
+		continue
+	}
+
+	switch strings.TrimSpace(kv[0]) {
+	case "target":
+		params.TargetIP = strings.TrimSpace(kv[1])
+	case "port":
+		if port, err := strconv.Atoi(kv[1]); err == nil {
+			params.TargetPort = port
+		}
+	case "duration":
+		if dur, err := time.ParseDuration(kv[1]); err == nil {
+			params.Duration = dur
+		}
+	case "interval":
+		if interval, err := time.ParseDuration(kv[1]); err == nil {
+			params.PacketInterval = interval
+		}
+	}
+}
+
+return params, nil
+}
+*******************autre******************
+type PacketStats struct {
+	SentPackets        int
+	ReceivedPackets    int
+	TotalBytesSent     int64
+	TotalBytesReceived int64
+	LastLatency        int64
+	StartTime          time.Time
+	LatencySamples     []int64
+	TargetAddress      string
+	TargetPort         int
+	
+}
