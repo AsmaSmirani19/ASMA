@@ -2,25 +2,26 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"mon-projet-go/testpb"
 	"net"
-	"database/sql"
-	"github.com/segmentio/kafka-go"
 	"time"
-	"context"
-	"encoding/json"
+
+	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 )
 
 type TestResult struct {
-    AgentID   string
-    Timestamp time.Time
-    Latency   float64
-    Loss      float64
-    Throughput float64
+	AgentID    string
+	Timestamp  time.Time
+	Latency    float64
+	Loss       float64
+	Throughput float64
 }
 
 // structure des paquets
@@ -160,7 +161,7 @@ func SendTCPPacket(packet []byte, addr string, port int) error {
 
 	timeout := 5 * time.Second
 
-conn, err := net.DialTimeout("tcp", fmt.Sprintf("[%s]:%d", addr, port), timeout)
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("[%s]:%d", addr, port), timeout)
 	if err != nil {
 		return err
 	}
@@ -274,7 +275,6 @@ func client() {
 
 	// Envoi d'une commande de test à l'agent via Kafka
 	SendTestRequestToKafka("START_TEST")
-	
 
 	// 8. Préparer le paquet Stop Session
 	stopSessionPacket := StopSessionPacket{
@@ -383,35 +383,35 @@ func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTes
 	log.Println("Lancement du Quick Test sur le serveur...")
 
 	// Envoie d’une requête (commande de test)
-    testCmd := &testpb.QuickTestMessage{
-        Message: &testpb.QuickTestMessage_Request{
-            Request: &testpb.QuickTestRequest{
-                TestId:     "test_001",
-                Parameters: "ping 8.8.8.8",
-            },
-        },
-    }
+	testCmd := &testpb.QuickTestMessage{
+		Message: &testpb.QuickTestMessage_Request{
+			Request: &testpb.QuickTestRequest{
+				TestId:     "test_001",
+				Parameters: "ping 8.8.8.8",
+			},
+		},
+	}
 
-    if err := stream.Send(testCmd); err != nil {
-        log.Printf("Erreur d'envoi de la commande: %v", err)
-        return err
-    }
+	if err := stream.Send(testCmd); err != nil {
+		log.Printf("Erreur d'envoi de la commande: %v", err)
+		return err
+	}
 
 	// Attente de la réponse du client
-    for {
-        in, err := stream.Recv()
-        if err != nil {
-            log.Printf("Erreur lors de la réception: %v", err)
-            return err
-        }
-		 // Vérifie si c'est une réponse
-		 if res, ok := in.Message.(*testpb.QuickTestMessage_Response); ok {
-            log.Printf("Statut: %s, Résultat: %s", res.Response.Status, res.Response.Result)
-            break
-        }
-    }
+	for {
+		in, err := stream.Recv()
+		if err != nil {
+			log.Printf("Erreur lors de la réception: %v", err)
+			return err
+		}
+		// Vérifie si c'est une réponse
+		if res, ok := in.Message.(*testpb.QuickTestMessage_Response); ok {
+			log.Printf("Statut: %s, Résultat: %s", res.Response.Status, res.Response.Result)
+			break
+		}
+	}
 
-    return nil
+	return nil
 }
 
 func listenToTestResultsAndStore(db *sql.DB) {
@@ -435,15 +435,13 @@ func listenToTestResultsAndStore(db *sql.DB) {
 			continue
 		}
 
-		if err := saveResultsToDB(db, QoSMetrics{});
-		 err != nil {
+		if err := saveResultsToDB(db, QoSMetrics{}); err != nil {
 			log.Printf("Erreur DB : %v", err)
 		} else {
 			log.Printf("Résultat stocké avec succès : %+v", result)
 		}
 	}
 }
-
 
 func main() {
 

@@ -19,7 +19,7 @@ func connectToDB() (*sql.DB, error) {
 	if err != nil {
 		log.Fatal("Erreur de connexion :", err)
 	}
-	return db , nil 
+	return db, nil
 }
 
 func saveResultsToDB(db *sql.DB, qos QoSMetrics) error {

@@ -120,14 +120,13 @@ func receivePacket() ([]byte, error) {
 }
 
 // Démarrage du test QoS
-func startTest(ctx context.Context, testParams string) (*PacketStats, *QoSMetrics, error) {
+func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 
 	params, err := parseTestParameters(testParams)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid test parameters: %v", err)
 	}
 
-	// 2. Configurer le test avec ces paramètres
 	Stats := &PacketStats{
 		StartTime:      time.Now(),
 		TargetAddress:  params.TargetIP,
@@ -136,7 +135,6 @@ func startTest(ctx context.Context, testParams string) (*PacketStats, *QoSMetric
 	}
 	qos := &QoSMetrics{}
 
-	// 3. Exécuter le test
 	testEnd := Stats.StartTime.Add(params.Duration)
 	for time.Now().Before(testEnd) {
 		err := handleSender(Stats, qos)
@@ -145,12 +143,11 @@ func startTest(ctx context.Context, testParams string) (*PacketStats, *QoSMetric
 		}
 		time.Sleep(params.PacketInterval)
 	}
-	// 4. Calculer les métriques finales
+
 	if Stats.SentPackets > 0 {
 		qos.PacketLossPercent = float64(Stats.SentPackets-Stats.ReceivedPackets) / float64(Stats.SentPackets) * 100
 	}
 
-	// Calcul de la latence moyenne
 	if len(Stats.LatencySamples) > 0 {
 		var totalLatency int64
 		for _, lat := range Stats.LatencySamples {
@@ -158,7 +155,7 @@ func startTest(ctx context.Context, testParams string) (*PacketStats, *QoSMetric
 		}
 		qos.AvgLatencyMs = totalLatency / int64(len(Stats.LatencySamples)) / 1e6
 	}
-	// Calcul de la gigue
+
 	if len(Stats.LatencySamples) > 1 {
 		var totalJitter int64
 		for i := 1; i < len(Stats.LatencySamples); i++ {
@@ -170,11 +167,10 @@ func startTest(ctx context.Context, testParams string) (*PacketStats, *QoSMetric
 		qos.AvgJitterMs = 0
 	}
 
-	// Calcul du débit moyen
 	if params.Duration.Seconds() > 0 {
 		qos.AvgThroughputKbps = float64(Stats.TotalBytesReceived*8) / params.Duration.Seconds() / 1024
 	}
-	// Enregistrer les dernières métriques
+
 	SetLatestMetrics(qos)
 
 	return Stats, qos, nil
@@ -345,13 +341,36 @@ func handleReflector(data []byte) error {
 
 	return SendPacket(serializedtestPacket, "127.0.0.1", 5000)
 }
-
-// Fonction utilitaire pour la valeur minimale
-func min(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
+func listenAsReflector() {
+	addr := net.UDPAddr{
+		Port: 9000, // le port où le sender envoie les paquets
+		IP:   net.ParseIP("0.0.0.0"),
 	}
-	return b
+
+	conn, err := net.ListenUDP("udp", &addr)
+	if err != nil {
+		log.Fatalf("Erreur écoute UDP: %v", err)
+	}
+	defer conn.Close()
+
+	buffer := make([]byte, 1500)
+
+	log.Println("Reflector en écoute sur", addr.String())
+
+	for {
+		n, remoteAddr, err := conn.ReadFromUDP(buffer)
+		if err != nil {
+			log.Printf("Erreur lecture: %v", err)
+			continue
+		}
+
+		go func(data []byte, addr *net.UDPAddr) {
+			err := handleReflector(data[:n])
+			if err != nil {
+				log.Printf("Erreur handleReflector: %v", err)
+			}
+		}(buffer[:n], remoteAddr)
+	}
 }
 
 // Ajouter cette définition quelque part dans votre code
@@ -396,7 +415,7 @@ func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTest
 	// Exécution du test dans une goroutine
 	go func() {
 		defer close(results)
-		_, metrics, err := startTest(ctx, req.GetParameters())
+		_, metrics, err := startTest(req.GetParameters())
 		if err != nil {
 			log.Printf("Test %s échoué: %v", req.GetTestId(), err)
 			return
@@ -477,6 +496,10 @@ func startClientStream() {
 }
 
 func main() {
+
+	go listenToTestRequestsFromKafka()
+	go listenAsReflector()
+
 	// 1. Démarrage WebSocket pour les résultats temps réel
 	go StartWebSocketAgent()
 

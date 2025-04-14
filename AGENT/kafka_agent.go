@@ -10,16 +10,14 @@ import (
 
 // Structure des résultats de test à envoyer au backend
 type TestResult struct {
-	AgentID        				 string     	 `json:"agent_id"`
-	Target       				 string     	  `json:"target"`
-	Port         				   int        	  `json:"port"`
-	PacketLossPercent			  float64		   `json:"packet_loss_percent"`
-	AvgLatencyMs   				   int64           `json:"avg_latency_ms"`
-	AvgJitterMs    				   int64        	`json:"avg_jitter_ms"`
-	AvgThroughputKbps 			  float64			`json:"avg-throughput_Kbps "`
+	AgentID           string  `json:"agent_id"`
+	Target            string  `json:"target"`
+	Port              int     `json:"port"`
+	PacketLossPercent float64 `json:"packet_loss_percent"`
+	AvgLatencyMs      int64   `json:"avg_latency_ms"`
+	AvgJitterMs       int64   `json:"avg_jitter_ms"`
+	AvgThroughputKbps float64 `json:"avg_throughput_Kbps"`
 }
-
-	
 
 // Fonction qui écoute les demandes de test depuis Kafka
 func listenToTestRequestsFromKafka() {
@@ -54,7 +52,7 @@ func runTestAndSendResult() {
 	ctx := context.Background()
 	params := "target=127.0.0.1&port=9000&duration=10s&interval=1s"
 
-	stats, qos , err := startTest(ctx, params)
+	stats, qos, err := startTest(params)
 	if err != nil {
 		log.Printf("Erreur pendant le test : %v", err)
 		return
@@ -67,19 +65,15 @@ func runTestAndSendResult() {
 
 	// Construction de l'objet de résultat
 	result := TestResult{
-		AgentID:             "agent-001", // tu peux le rendre dynamique si t'as plusieurs agents
-		Target:              "127.0.0.1",
-		Port:                 9000,
-		AvgThroughputKbps:     qos.AvgThroughputKbps, // si tu as ce champ
-		AvgLatencyMs:          qos.AvgLatencyMs,
-		AvgJitterMs:           qos.AvgJitterMs,
-		PacketLossPercent:     qos.PacketLossPercent, // si tu calcules ça
-	
+		AgentID:           "agent-001", // tu peux le rendre dynamique si t'as plusieurs agents
+		Target:            "127.0.0.1",
+		Port:              9000,
+		AvgThroughputKbps: qos.AvgThroughputKbps, // si tu as ce champ
+		AvgLatencyMs:      qos.AvgLatencyMs,
+		AvgJitterMs:       qos.AvgJitterMs,
+		PacketLossPercent: qos.PacketLossPercent, // si tu calcules ça
+
 	}
-
-
-
-	
 
 	// Sérialisation en JSON
 	resultBytes, err := json.Marshal(result)
@@ -90,8 +84,8 @@ func runTestAndSendResult() {
 
 	// Envoi via Kafka
 	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers: []string{"localhost:9092"},
-		Topic:   "test_results",
+		Brokers:  []string{"localhost:9092"},
+		Topic:    "test_results",
 		Balancer: &kafka.LeastBytes{},
 	})
 	defer writer.Close()
