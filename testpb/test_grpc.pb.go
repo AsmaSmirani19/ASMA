@@ -22,7 +22,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type TestServiceClient interface {
-	StreamTestCommands(ctx context.Context, in *TestCommand, opts ...grpc.CallOption) (TestService_StreamTestCommandsClient, error)
+	PerformQuickTest(ctx context.Context, opts ...grpc.CallOption) (TestService_PerformQuickTestClient, error)
 }
 
 type testServiceClient struct {
@@ -33,32 +33,31 @@ func NewTestServiceClient(cc grpc.ClientConnInterface) TestServiceClient {
 	return &testServiceClient{cc}
 }
 
-func (c *testServiceClient) StreamTestCommands(ctx context.Context, in *TestCommand, opts ...grpc.CallOption) (TestService_StreamTestCommandsClient, error) {
-	stream, err := c.cc.NewStream(ctx, &TestService_ServiceDesc.Streams[0], "/testpb.TestService/StreamTestCommands", opts...)
+func (c *testServiceClient) PerformQuickTest(ctx context.Context, opts ...grpc.CallOption) (TestService_PerformQuickTestClient, error) {
+	stream, err := c.cc.NewStream(ctx, &TestService_ServiceDesc.Streams[0], "/testpb.TestService/PerformQuickTest", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &testServiceStreamTestCommandsClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
+	x := &testServicePerformQuickTestClient{stream}
 	return x, nil
 }
 
-type TestService_StreamTestCommandsClient interface {
-	Recv() (*TestResponse, error)
+type TestService_PerformQuickTestClient interface {
+	Send(*QuickTestMessage) error
+	Recv() (*QuickTestMessage, error)
 	grpc.ClientStream
 }
 
-type testServiceStreamTestCommandsClient struct {
+type testServicePerformQuickTestClient struct {
 	grpc.ClientStream
 }
 
-func (x *testServiceStreamTestCommandsClient) Recv() (*TestResponse, error) {
-	m := new(TestResponse)
+func (x *testServicePerformQuickTestClient) Send(m *QuickTestMessage) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *testServicePerformQuickTestClient) Recv() (*QuickTestMessage, error) {
+	m := new(QuickTestMessage)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -69,7 +68,7 @@ func (x *testServiceStreamTestCommandsClient) Recv() (*TestResponse, error) {
 // All implementations must embed UnimplementedTestServiceServer
 // for forward compatibility
 type TestServiceServer interface {
-	StreamTestCommands(*TestCommand, TestService_StreamTestCommandsServer) error
+	PerformQuickTest(TestService_PerformQuickTestServer) error
 	mustEmbedUnimplementedTestServiceServer()
 }
 
@@ -77,8 +76,8 @@ type TestServiceServer interface {
 type UnimplementedTestServiceServer struct {
 }
 
-func (UnimplementedTestServiceServer) StreamTestCommands(*TestCommand, TestService_StreamTestCommandsServer) error {
-	return status.Errorf(codes.Unimplemented, "method StreamTestCommands not implemented")
+func (UnimplementedTestServiceServer) PerformQuickTest(TestService_PerformQuickTestServer) error {
+	return status.Errorf(codes.Unimplemented, "method PerformQuickTest not implemented")
 }
 func (UnimplementedTestServiceServer) mustEmbedUnimplementedTestServiceServer() {}
 
@@ -93,25 +92,30 @@ func RegisterTestServiceServer(s grpc.ServiceRegistrar, srv TestServiceServer) {
 	s.RegisterService(&TestService_ServiceDesc, srv)
 }
 
-func _TestService_StreamTestCommands_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(TestCommand)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(TestServiceServer).StreamTestCommands(m, &testServiceStreamTestCommandsServer{stream})
+func _TestService_PerformQuickTest_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(TestServiceServer).PerformQuickTest(&testServicePerformQuickTestServer{stream})
 }
 
-type TestService_StreamTestCommandsServer interface {
-	Send(*TestResponse) error
+type TestService_PerformQuickTestServer interface {
+	Send(*QuickTestMessage) error
+	Recv() (*QuickTestMessage, error)
 	grpc.ServerStream
 }
 
-type testServiceStreamTestCommandsServer struct {
+type testServicePerformQuickTestServer struct {
 	grpc.ServerStream
 }
 
-func (x *testServiceStreamTestCommandsServer) Send(m *TestResponse) error {
+func (x *testServicePerformQuickTestServer) Send(m *QuickTestMessage) error {
 	return x.ServerStream.SendMsg(m)
+}
+
+func (x *testServicePerformQuickTestServer) Recv() (*QuickTestMessage, error) {
+	m := new(QuickTestMessage)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // TestService_ServiceDesc is the grpc.ServiceDesc for TestService service.
@@ -123,9 +127,10 @@ var TestService_ServiceDesc = grpc.ServiceDesc{
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "StreamTestCommands",
-			Handler:       _TestService_StreamTestCommands_Handler,
+			StreamName:    "PerformQuickTest",
+			Handler:       _TestService_PerformQuickTest_Handler,
 			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "test.proto",

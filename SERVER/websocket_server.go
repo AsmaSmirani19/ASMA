@@ -10,9 +10,7 @@ import (
 // Crée un upgrader WebSocket
 var upgrader = websocket.Upgrader{
 	// Permet toutes les origines pour l'exemple, mais tu devrais sécuriser ça dans une application réelle.
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+	CheckOrigin: func(r *http.Request) bool {return true},
 }
 
 // Handler pour gérer la connexion WebSocket

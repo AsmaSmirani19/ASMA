@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
+
 	"log"
 	"mon-projet-go/testpb"
 	"net"
@@ -346,98 +346,6 @@ func handleReflector(data []byte) error {
 	return SendPacket(serializedtestPacket, "127.0.0.1", 5000)
 }
 
-func listenForTestCommands() {
-	const (
-		initialReconnectDelay = 1 * time.Second
-		maxReconnectDelay     = 30 * time.Second
-		connectionTimeout     = 10 * time.Second
-		receiveTimeout        = 30 * time.Second
-	)
-	const grpcServerAddr = "localhost:50051"
-
-	var reconnectDelay time.Duration = initialReconnectDelay
-
-	for {
-		// Création d'un contexte avec timeout pour la connexion
-		connCtx, connCancel := context.WithTimeout(context.Background(), connectionTimeout)
-
-		conn, err := grpc.DialContext(
-			connCtx,
-			grpcServerAddr,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithBlock(),
-		)
-		connCancel() // Important: libérer les ressources du contexte
-
-		if err != nil {
-			log.Printf("Connexion impossible: %v - Nouvelle tentative dans %v", err, reconnectDelay)
-			time.Sleep(reconnectDelay)
-
-			// Backoff exponentiel
-			reconnectDelay = min(reconnectDelay*2, maxReconnectDelay)
-			continue
-		}
-
-		// Réinitialiser le délai de reconnexion après une connexion réussie
-		reconnectDelay = initialReconnectDelay
-
-		client := testpb.NewTestServiceClient(conn)
-
-		// Création d'un contexte avec timeout pour le stream
-		streamCtx, streamCancel := context.WithCancel(context.Background())
-		defer streamCancel()
-
-		stream, err := client.StreamTestCommands(streamCtx, &testpb.TestCommand{
-			TestId: "CLIENT_READY",
-		})
-		if err != nil {
-			log.Printf("Échec de création du stream: %v", err)
-			conn.Close()
-			time.Sleep(reconnectDelay)
-			continue
-		}
-
-		log.Println("Connecté au serveur, en attente de commandes...")
-
-		// Boucle de réception avec timeout
-	receiveLoop:
-		for {
-			// Configurer un timeout pour chaque opération de réception
-			select {
-			case <-time.After(receiveTimeout):
-				log.Printf("Timeout: aucune commande reçue depuis %v", receiveTimeout)
-				break receiveLoop
-
-			default:
-				res, err := stream.Recv()
-				if err != nil {
-					if err == io.EOF {
-						log.Printf("Fin du stream")
-					} else {
-						log.Printf("Erreur de réception: %v", err)
-					}
-					break receiveLoop
-				}
-
-				log.Printf("Commande reçue: %s - %s", res.Status, res.Result)
-
-				// Lancer le test dans une goroutine avec son propre contexte
-				go func(testParams string) {
-					testCtx, testCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-					defer testCancel()
-
-					_, _, err := startTest(testCtx, testParams)
-					if err != nil {
-						log.Printf("Erreur lors du test: %v,", err)
-					}
-				}(res.Result)
-			}
-		}
-
-		conn.Close()
-	}
-}
-
 // Fonction utilitaire pour la valeur minimale
 func min(a, b time.Duration) time.Duration {
 	if a < b {
@@ -445,42 +353,136 @@ func min(a, b time.Duration) time.Duration {
 	}
 	return b
 }
-func sendInitialTestRequest() {
-	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+// Ajouter cette définition quelque part dans votre code
+type twampAgent struct {
+	testpb.UnimplementedTestServiceServer
+	mu                sync.Mutex
+	currentTestCancel context.CancelFunc
+}
+
+// RunQuickTest avec gestion de contexte et streaming
+func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
+	// Réception d'un message (devrait être une requête)
+	msg, err := stream.Recv()
 	if err != nil {
-		log.Fatalf("Connexion initiale impossible: %v", err)
+		return fmt.Errorf("échec réception message: %v", err)
+	}
+
+	// Extraction de la requête de test
+	reqMsg, ok := msg.Message.(*testpb.QuickTestMessage_Request)
+	if !ok {
+		return fmt.Errorf("message reçu n’est pas une requête de test")
+	}
+
+	req := reqMsg.Request
+
+	log.Printf("Nouveau test reçu - ID: %s, Paramètres: %s", req.GetTestId(), req.GetParameters())
+
+	// Création d'un contexte annulable pour le test
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
+	a.mu.Lock()
+	if a.currentTestCancel != nil {
+		a.currentTestCancel() // Annule tout test précédent
+	}
+	a.currentTestCancel = cancel
+	a.mu.Unlock()
+
+	// Canal pour les résultats
+	results := make(chan *QoSMetrics, 10)
+
+	// Exécution du test dans une goroutine
+	go func() {
+		defer close(results)
+		_, metrics, err := startTest(ctx, req.GetParameters())
+		if err != nil {
+			log.Printf("Test %s échoué: %v", req.GetTestId(), err)
+			return
+		}
+		results <- metrics
+	}()
+
+	// Envoi des résultats au serveur
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case qos, ok := <-results:
+			if !ok {
+				return nil
+			}
+
+			respMsg := &testpb.QuickTestMessage{
+				Message: &testpb.QuickTestMessage_Response{
+					Response: &testpb.QuickTestResponse{
+						Status: testpb.TestStatus_COMPLETE.String(),
+						Result: fmt.Sprintf("loss:%.2f,latency:%.2f,throughput:%.2f",
+							float64(qos.PacketLossPercent),
+							float64(qos.AvgLatencyMs),
+							float64(qos.AvgThroughputKbps)),
+					},
+				},
+			}
+
+			if err := stream.Send(respMsg); err != nil {
+				return fmt.Errorf("échec envoi résultats: %v", err)
+			}
+		}
+	}
+}
+
+func startGRPCServer() {
+	lis, err := net.Listen("tcp", ":50052")
+	if err != nil {
+		log.Fatalf("Échec d'écoute : %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	testpb.RegisterTestServiceServer(grpcServer, &twampAgent{})
+
+	log.Println("Agent TWAMP (serveur gRPC) démarré sur le port 50052")
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("Échec du serveur gRPC : %v", err)
+	}
+}
+func startClientStream() {
+	conn, err := grpc.Dial(
+		"localhost:50051",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	if err != nil {
+		log.Fatalf("Échec de connexion au serveur principal : %v", err)
 	}
 	defer conn.Close()
 
 	client := testpb.NewTestServiceClient(conn)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req := &testpb.TestCommand{
-		TestId:     "Latence",
-		Parameters: "10 paquets ICMP vers 8.8.8.8",
-	}
-
-	res, err := client.StreamTestCommands(ctx, req)
+	stream, err := client.PerformQuickTest(context.Background())
 	if err != nil {
-		log.Printf("Erreur de demande initiale de test QoS: %v", err)
-		return
+		log.Fatalf("Échec de création du stream : %v", err)
 	}
 
-	log.Printf("Réponse initiale du serveur : %v", res)
+	log.Println("Connexion au serveur principal établie")
+
+	// Boucle pour maintenir la connexion ouverte
+	for {
+		select {
+		case <-stream.Context().Done():
+			log.Println("Connexion au serveur terminée")
+			return
+		}
+	}
 }
 
 func main() {
-	// 1. Démarrage du WebSocket Agent pour les résultats en temps réel
+	// 1. Démarrage WebSocket pour les résultats temps réel
 	go StartWebSocketAgent()
 
-	// 2. Écoute des commandes du serveur gRPC (streaming)
-	go listenForTestCommands()
+	// 2. Démarrage du serveur gRPC
+	go startGRPCServer()
 
-	// 3. Connexion ponctuelle au serveur pour envoyer une demande simple (optionnelle)
-	sendInitialTestRequest()
-
-	// 4. Bloquer le main thread (ou attendre via un signal OS pour arrêt propre)
-	select {} // infinite block, or use signal.Notify for graceful shutdown
+	// 3. Connexion au serveur principal et lancement du stream duplex
+	startClientStream()
 }

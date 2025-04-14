@@ -4,16 +4,29 @@ package testpb;
 
 option go_package = "./testpb";
 
-message TestCommand {
+service TestService {
+  rpc PerformQuickTest(stream QuickTestMessage) returns (stream QuickTestMessage);
+}
+
+message QuickTestRequest {
   string test_id = 1;
   string parameters = 2;
 }
 
-message TestResponse {
+message QuickTestResponse {
   string status = 1;
   string result = 2;
 }
 
-service TestService {
-  rpc StreamTestCommands(TestCommand) returns (stream TestResponse);
+message QuickTestMessage {
+  oneof message {
+    QuickTestRequest request = 1;
+    QuickTestResponse response = 2;
+  }
+}
+
+enum TestStatus {
+  UNKNOWN = 0;
+  COMPLETE = 1;
+  IN_PROGRESS = 2;
 }

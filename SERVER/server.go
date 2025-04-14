@@ -2,19 +2,26 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"fmt"
 	"log"
 	"mon-projet-go/testpb"
 	"net"
-
+	"database/sql"
+	"github.com/segmentio/kafka-go"
 	"time"
-
+	"context"
+	"encoding/json"
 	"google.golang.org/grpc"
-
-	"google.golang.org/grpc/credentials/insecure"
 )
+
+type TestResult struct {
+    AgentID   string
+    Timestamp time.Time
+    Latency   float64
+    Loss      float64
+    Throughput float64
+}
 
 // structure des paquets
 type SendSessionRequestPacket struct {
@@ -150,7 +157,10 @@ func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 func SendTCPPacket(packet []byte, addr string, port int) error {
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", addr, port))
+
+	timeout := 5 * time.Second
+
+conn, err := net.DialTimeout("tcp", fmt.Sprintf("[%s]:%d", addr, port), timeout)
 	if err != nil {
 		return err
 	}
@@ -158,9 +168,8 @@ func SendTCPPacket(packet []byte, addr string, port int) error {
 
 	_, err = conn.Write(packet)
 	if err != nil {
-		return err
+		return fmt.Errorf("échec d'envoi du paquet: %w", err)
 	}
-
 	return nil
 }
 
@@ -168,24 +177,29 @@ func SendTCPPacket(packet []byte, addr string, port int) error {
 func receiveTCPPacket() ([]byte, error) {
 	listener, err := net.Listen("tcp", ":60000")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("erreur de création du listener: %v", err)
 	}
 	defer listener.Close()
 	conn, err := listener.Accept()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("erreur lors de l'acceptation de la connexion: %v", err)
 	}
 	defer conn.Close()
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
 	buffer := make([]byte, 1500)
 	n, err := conn.Read(buffer)
 	if err != nil {
-		return nil, err
+		// Si la lecture échoue, vérifier si c'est un timeout
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return nil, fmt.Errorf("timeout lors de la lecture du paquet")
+		}
+		return nil, fmt.Errorf("erreur de lecture du paquet: %v", err)
 	}
 	return buffer[:n], nil
 }
 
 func identifyPacketType(data []byte) string {
-	// Simuler l'identification selon la taille
 	if len(data) == 45 {
 		return "SessionRequest"
 	} else if len(data) == 17 {
@@ -197,6 +211,14 @@ func identifyPacketType(data []byte) string {
 }
 
 func client() {
+
+	const (
+		serverAddress = "127.0.0.1"
+		serverPort    = 60001
+		senderPort    = 6000
+		receiverPort  = 5000
+	)
+
 	// 1. Envoyer le paquet Session Request
 	packet := SendSessionRequestPacket{
 		SenderAddress: func() [16]byte {
@@ -204,8 +226,8 @@ func client() {
 			copy(ip[:], net.ParseIP("127.0.0.1").To16())
 			return ip
 		}(),
-		ReceiverPort:  5000,
-		SenderPort:    6000,
+		ReceiverPort:  receiverPort,
+		SenderPort:    senderPort,
 		PaddingLength: 0,
 		StartTime:     uint32(time.Now().Unix()),
 		Timeout:       30,
@@ -217,7 +239,7 @@ func client() {
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet Session-Request : %v", err)
 	}
-	if err := SendTCPPacket(serializedPacket, "127.0.0.1", 60001); err != nil {
+	if err := SendTCPPacket(serializedPacket, serverAddress, serverPort); err != nil {
 		log.Fatalf("Erreur envoi Session-Request : %v", err)
 	}
 
@@ -238,14 +260,21 @@ func client() {
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du paquet Start Session : %v", err)
 	}
-	if err = SendTCPPacket(serializedStartSessionPacket, "127.0.0.1", 60001); err != nil {
+	if err = SendTCPPacket(serializedStartSessionPacket, serverAddress, serverPort); err != nil {
 		log.Fatalf("Erreur lors de l'envoi du paquet Start Session : %v", err)
 	}
+
 	// 4. Réception du paquet Start-ACK et validation
 	receivedData, err = receiveTCPPacket()
 	if err != nil {
 		log.Fatalf("Erreur lors de la réception Start-ACK : %v", err)
 	}
+
+	log.Println("✅ Start-ACK reçu. Déclenchement du test via Kafka...")
+
+	// Envoi d'une commande de test à l'agent via Kafka
+	SendTestRequestToKafka("START_TEST")
+	
 
 	// 8. Préparer le paquet Stop Session
 	stopSessionPacket := StopSessionPacket{
@@ -259,7 +288,7 @@ func client() {
 	if err != nil {
 		log.Fatalf("Erreur de sérialisation du Stop-Ack : %v", err)
 	}
-	if err = SendTCPPacket(serializedStopSessionPacket, "127.0.0.1", 60001); err != nil {
+	if err = SendTCPPacket(serializedStopSessionPacket, serverAddress, serverPort); err != nil {
 		log.Fatalf("Erreur lors de l'envoi du Stop Session : %v", err)
 	}
 }
@@ -343,72 +372,78 @@ func Serveur() {
 	}
 }
 
-// Implémentation du service gRPC
-type server struct {
+type quickTestServer struct {
 	testpb.UnimplementedTestServiceServer
 }
 
-// Implémentation du serveur qui lance le test dès la connexion avec l'agent
-func (s *server) startTestWithAgent() {
-	const (
-		initialReconnectDelay = 1 * time.Second
-		maxReconnectDelay     = 30 * time.Second
-		connectionTimeout     = 10 * time.Second
-	)
+//TestServiceServer
 
-	var reconnectDelay time.Duration = initialReconnectDelay
+// Fonction qui lance un Quick Test
+func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
+	log.Println("Lancement du Quick Test sur le serveur...")
+
+	// Envoie d’une requête (commande de test)
+    testCmd := &testpb.QuickTestMessage{
+        Message: &testpb.QuickTestMessage_Request{
+            Request: &testpb.QuickTestRequest{
+                TestId:     "test_001",
+                Parameters: "ping 8.8.8.8",
+            },
+        },
+    }
+
+    if err := stream.Send(testCmd); err != nil {
+        log.Printf("Erreur d'envoi de la commande: %v", err)
+        return err
+    }
+
+	// Attente de la réponse du client
+    for {
+        in, err := stream.Recv()
+        if err != nil {
+            log.Printf("Erreur lors de la réception: %v", err)
+            return err
+        }
+		 // Vérifie si c'est une réponse
+		 if res, ok := in.Message.(*testpb.QuickTestMessage_Response); ok {
+            log.Printf("Statut: %s, Résultat: %s", res.Response.Status, res.Response.Result)
+            break
+        }
+    }
+
+    return nil
+}
+
+func listenToTestResultsAndStore(db *sql.DB) {
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers: []string{"localhost:9092"},
+		Topic:   "test_results",
+		GroupID: "backend-group",
+	})
+	defer reader.Close()
 
 	for {
-		// Création d'un contexte avec timeout pour la connexion
-		connCtx, connCancel := context.WithTimeout(context.Background(), connectionTimeout)
-		conn, err := grpc.DialContext(
-			connCtx,
-			"localhost:50051", // Adresse de l'agent
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-			grpc.WithBlock(),
-		)
-		connCancel() // Libérer les ressources du contexte
-
+		msg, err := reader.ReadMessage(context.Background())
 		if err != nil {
-			log.Printf("Connexion impossible: %v - Nouvelle tentative dans %v", err, reconnectDelay)
-			time.Sleep(reconnectDelay)
-
-			// Backoff exponentiel
-			reconnectDelay = min(reconnectDelay*2, maxReconnectDelay)
+			log.Printf("Erreur Kafka : %v", err)
 			continue
 		}
 
-		// Réinitialiser le délai de reconnexion après une connexion réussie
-		reconnectDelay = initialReconnectDelay
-
-		client := testpb.NewTestServiceClient(conn)
-
-		// Envoi immédiat d'une commande de test à l'agent
-		testCommand := &testpb.TestCommand{
-			TestId:     "START_TEST",
-			Parameters: "test_parameters_here", // Paramètres du test (exemple)
-		}
-
-		res, err := client.StreamTestCommands(context.Background(), testCommand)
-		if err != nil {
-			log.Printf("Erreur lors de l'exécution du test: %v", err)
-			conn.Close()
+		var result TestResult
+		if err := json.Unmarshal(msg.Value, &result); err != nil {
+			log.Printf("Erreur JSON : %v", err)
 			continue
 		}
 
-		log.Printf("Test lancé avec succès. Résultat: %s, Statut: %s", res.Result)
-
-		conn.Close()
+		if err := saveResultsToDB(db, QoSMetrics{});
+		 err != nil {
+			log.Printf("Erreur DB : %v", err)
+		} else {
+			log.Printf("Résultat stocké avec succès : %+v", result)
+		}
 	}
 }
 
-// Fonction utilitaire pour la valeur minimale
-func min1(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 func main() {
 
@@ -419,7 +454,12 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	testpb.RegisterTestServiceServer(grpcServer, &server{})
+	testpb.RegisterTestServiceServer(grpcServer, &quickTestServer{})
+
+	log.Println("Serveur gRPC lancé sur le port 50051...")
+	if err := grpcServer.Serve(listener); err != nil {
+		log.Fatalf("Erreur lors du lancement du serveur: %v", err)
+	}
 
 	go StartWebSocketServer()
 
@@ -432,4 +472,11 @@ func main() {
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Fatalf("Échec du démarrage du serveur gRPC : %v", err)
 	}
+	db, err := connectToDB()
+	if err != nil {
+		log.Fatalf("Erreur de connexion DB : %v", err)
+	}
+	defer db.Close()
+
+	listenToTestResultsAndStore(db)
 }

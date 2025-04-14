@@ -322,5 +322,101 @@ type PacketStats struct {
 	LatencySamples     []int64
 	TargetAddress      string
 	TargetPort         int
+
+
+
+	kafka server : // Fonction principale pour lancer le serveur Kafka
+	func main() {
+		// Exemple d'envoi d'une demande de test
+		sendTestRequestToKafka("START_TEST")
+	}
+
+
+
+	grpc**************
+	func sendInitialTestRequest() {
+		conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), grpc.WithBlock())
+		if err != nil {
+			log.Fatalf("Erreur de connexion au serveur: %v", err)
+		}
+		defer conn.Close()
 	
-}
+		client := testpb.NewTestServiceClient(conn)
+	
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	
+		req := &testpb.QuickTestRequest{
+			TestId:     "Latence",
+			Parameters: "10 paquets ICMP vers 8.8.8.8",
+		}
+	
+		res, err := client.PerformQuickTest(ctx, req)
+		if err != nil {
+			log.Printf("Erreur de demande initiale de test QoS: %v", err)
+			return
+		}
+	
+		log.Printf("Résultat du test reçu : %s (%s)", res.Result, res.Status)
+	}
+
+
+
+**** Version simplifiée de PerformQuickTest (pas d’annulation) :****
+
+	func PerformQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
+		// Réception de la commande de test
+		req, err := stream.Recv()
+		if err != nil {
+			return fmt.Errorf("échec réception commande: %v", err)
+		}
+	
+		log.Printf("Test reçu - ID: %s, Paramètres: %s", req.GetTestId(), req.GetParameters())
+	
+		// Lancer le test directement (sans annulation)
+		_, metrics, err := startTest(context.Background(), req.GetParameters())
+		if err != nil {
+			return fmt.Errorf("échec du test: %v", err)
+		}
+	
+		// Préparer et envoyer la réponse
+		resp := &testpb.QuickTestResponse{
+			Status: testpb.TestStatus_COMPLETE,
+			Result: fmt.Sprintf(
+				"loss:%.2f,latency:%.2f,throughput:%.2f",
+				metrics.PacketLossPercent,
+				metrics.AvgLatencyMs,
+				metrics.AvgThroughputKbps,
+			),
+		}
+	
+		if err := stream.Send(resp); err != nil {
+			return fmt.Errorf("échec envoi résultat: %v", err)
+		}
+	
+		return nil
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+	type TestResult struct {
+		AgentID        				 string     	 `json:"agent_id"`
+		Target       				 string     	  `json:"target"`
+		Port         				   int        	  `json:"port"`
+		PacketLossPercent			  float64		   `json:"packet_loss_percent"`
+		AvgLatencyMs   				   int64           `json:"avg_latency_ms"`
+		AvgJitterMs    				   int64        	`json:"avg_jitter_ms"`
+		AvgThroughputKbps 			  float64			`json:"avg-throughput_Kbps "`
+	}
+	
+	
