@@ -47,12 +47,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Fonction pour démarrer le serveur WebSocket
 func StartWebSocketServer() {
 	// Enregistre le handler WebSocket
 	http.HandleFunc("/ws", handleWebSocket)
 
-	// Démarre le serveur HTTP qui écoute sur le port 8080 pour les connexions WebSocket
-	log.Println("🚀 Serveur WebSocket lancé sur le port 8080...")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// Lance le serveur WebSocket dans une goroutine pour ne pas bloquer
+	go func() {
+		log.Println("🚀 Serveur WebSocket lancé sur le port 8080...")
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			log.Fatalf("Erreur WebSocket: %v", err)
+		}
+	}()
 }

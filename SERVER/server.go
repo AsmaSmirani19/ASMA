@@ -445,6 +445,8 @@ func listenToTestResultsAndStore(db *sql.DB) {
 
 func main() {
 
+	go StartWebSocketServer()
+
 	// Démarrage du serveur gRPC
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
@@ -459,17 +461,16 @@ func main() {
 		log.Fatalf("Erreur lors du lancement du serveur: %v", err)
 	}
 
-	go StartWebSocketServer()
-
-	go Serveur()
-	go client()
-
 	log.Println("Serveur gRPC démarré sur le port 50051...")
 
 	// Démarrer le serveur gRPC
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Fatalf("Échec du démarrage du serveur gRPC : %v", err)
 	}
+
+	go Serveur()
+	go client()
+
 	db, err := connectToDB()
 	if err != nil {
 		log.Fatalf("Erreur de connexion DB : %v", err)
