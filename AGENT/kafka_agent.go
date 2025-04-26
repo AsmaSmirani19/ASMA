@@ -22,8 +22,8 @@ type TestResult struct {
 // Fonction qui écoute les demandes de test depuis Kafka
 func listenToTestRequestsFromKafka() {
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{"localhost:9092"},
-		Topic:   "test_requests",
+		Brokers: []string{"127.0.0.1:9092"},
+		Topic:   "test-requests",
 		GroupID: "test-group",
 	})
 	defer reader.Close()
@@ -37,7 +37,7 @@ func listenToTestRequestsFromKafka() {
 
 		log.Printf("Message reçu : %s", message.Value)
 
-		if string(message.Value) == "START_TEST" {
+		if string(message.Value) == "START-TEST" {
 			runTestAndSendResult()
 		} else {
 			log.Printf("Commande non reconnue : %s", message.Value)
@@ -84,14 +84,14 @@ func runTestAndSendResult() {
 
 	// Envoi via Kafka
 	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers:  []string{"localhost:9092"},
-		Topic:    "test_results",
+		Brokers:  []string{"127.0.0.1:9092"},
+		Topic:    "test-results",
 		Balancer: &kafka.LeastBytes{},
 	})
 	defer writer.Close()
 
 	err = writer.WriteMessages(ctx, kafka.Message{
-		Key:   []byte("test_result"),
+		Key:   []byte("test-result"),
 		Value: resultBytes,
 	})
 	if err != nil {

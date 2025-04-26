@@ -10,10 +10,13 @@ import (
 	"log"
 	"mon-projet-go/testpb"
 	"net"
+	"net/http"
 	"time"
 
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
+
+	"github.com/rs/cors"
 )
 
 type TestResult struct {
@@ -274,7 +277,7 @@ func client() {
 	log.Println("✅ Start-ACK reçu. Déclenchement du test via Kafka...")
 
 	// Envoi d'une commande de test à l'agent via Kafka
-	SendTestRequestToKafka("START_TEST")
+	SendTestRequestToKafka("START-TEST")
 
 	// 8. Préparer le paquet Stop Session
 	stopSessionPacket := StopSessionPacket{
@@ -417,7 +420,7 @@ func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTes
 func listenToTestResultsAndStore(db *sql.DB) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: []string{"localhost:9092"},
-		Topic:   "test_results",
+		Topic:   "test-results",
 		GroupID: "backend-group",
 	})
 	defer reader.Close()
@@ -443,14 +446,11 @@ func listenToTestResultsAndStore(db *sql.DB) {
 	}
 }
 
-func main() {
-
-	go StartWebSocketServer()
-
-	// Démarrage du serveur gRPC
+// startGRPCServer démarre le serveur gRPC.
+func startGRPCServer() {
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
-		log.Fatalf("Échec de l'écoute : %v", err)
+		log.Fatalf("Échec de l'écoute sur le port 50051 : %v", err)
 	}
 
 	grpcServer := grpc.NewServer()
@@ -458,24 +458,68 @@ func main() {
 
 	log.Println("Serveur gRPC lancé sur le port 50051...")
 	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Erreur lors du lancement du serveur: %v", err)
+		log.Fatalf("Erreur lors du lancement du serveur gRPC : %v", err)
 	}
 
-	log.Println("Serveur gRPC démarré sur le port 50051...")
+}
 
-	// Démarrer le serveur gRPC
-	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Échec du démarrage du serveur gRPC : %v", err)
-	}
-
-	go Serveur()
-	go client()
-
+func main() {
+	// Initialisation de la connexion à la base de données
 	db, err := connectToDB()
 	if err != nil {
 		log.Fatalf("Erreur de connexion DB : %v", err)
 	}
 	defer db.Close()
 
-	listenToTestResultsAndStore(db)
+	// Définir les routes HTTP
+	http.HandleFunc("/api/test/start", startTest)
+	http.HandleFunc("/api/test/results", getTestResults)
+	http.HandleFunc("/api/agents", handleAgents(db))
+	http.HandleFunc("/api/planned-tests", handlePlannedTests(db))
+	http.HandleFunc("/api/agent-group", handleAgentGroup(db))
+
+	// Configurer CORS
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"http://localhost:4200"}, // Autoriser l'origine Angular
+		AllowedMethods: []string{"GET", "POST", "DELETE", "PUT"}, // Méthodes autorisées
+		AllowedHeaders: []string{"Content-Type", "Authorization"},
+	})
+
+	// Wrap du serveur avec le handler CORS
+	handler := c.Handler(http.DefaultServeMux)
+
+	// Démarrer le serveur HTTP dans une goroutine
+	go func() {
+		fmt.Println("Serveur HTTP lancé sur http://localhost:5000")
+		log.Fatal(http.ListenAndServe(":5000", handler))
+	}()
+
+	// Démarrer le serveur gRPC dans une goroutine
+	go startGRPCServer()
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+	
+
+	// Écouter les résultats des tests et les stocker dans la base de données
+	//go listenToTestResultsAndStore(db)
+
+	// Démarrer des serveurs ou clients
+	//go Serveur()
+	//go client()
+
+	// Bloquer le programme pour qu'il reste actif
+	select {}
 }

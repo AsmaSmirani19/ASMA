@@ -344,7 +344,7 @@ func handleReflector(data []byte) error {
 func listenAsReflector() {
 	addr := net.UDPAddr{
 		Port: 9000, // le port où le sender envoie les paquets
-		IP:   net.ParseIP("0.0.0.0"),
+		IP:   net.ParseIP("127.0.0.1"),
 	}
 
 	conn, err := net.ListenUDP("udp", &addr)
