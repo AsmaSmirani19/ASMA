@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
+	"strings"
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
@@ -140,23 +140,33 @@ func handleAgents(db *sql.DB) http.HandlerFunc {
             }
             w.Write([]byte(`{"message":"Agent mis à jour avec succès"}`))
 
-        case http.MethodDelete:
-            // Supprimer un agent
-            idStr := r.URL.Query().Get("id")
-            id, err := strconv.Atoi(idStr)
-            if err != nil || id == 0 {
-                http.Error(w, "ID invalide pour la suppression", http.StatusBadRequest)
-                return
-            }
-            if err := deleteAgentFromDB(db, id); err != nil {
-                http.Error(w, "Erreur lors de la suppression", http.StatusInternalServerError)
-                return
-            }
-            w.Write([]byte(`{"message":"Agent supprimé avec succès"}`))
-
-        default:
-            http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
-        }
+		case http.MethodDelete:
+			// Extraire l'ID de l'URL (dans le chemin)
+			idStr := strings.TrimPrefix(r.URL.Path, "/api/agents/")
+			id, err := strconv.Atoi(idStr)
+			if err != nil || id <= 0 {
+				http.Error(w, "ID invalide pour la suppression", http.StatusBadRequest)
+				return
+			}
+		
+			log.Printf("Suppression de l'agent avec ID : %d\n", id)
+		
+			// Suppression de l'agent dans la base de données
+			if err := deleteAgentFromDB(db, id); err != nil {
+				log.Printf("Erreur lors de la suppression de l'agent avec ID %d: %v\n", id, err)
+				http.Error(w, fmt.Sprintf("Erreur lors de la suppression de l'agent avec ID %d", id), http.StatusInternalServerError)
+				return
+			}
+		
+			// Répondre avec un message de succès
+			w.WriteHeader(http.StatusOK) // Code de statut 200 OK
+			w.Write([]byte(`{"message":"Agent supprimé avec succès"}`))
+		
+		default:
+			http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
+		}
+		
+		
     }
 }
 
@@ -380,7 +390,6 @@ func handleAgentGroup(db *sql.DB) http.HandlerFunc {
 			return
 		}
 	
-		// ✅ CORRECTION IMPORTANTE ICI
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"success": true}`))
@@ -393,6 +402,220 @@ func handleAgentGroup(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+func handleTestProfile(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		switch r.Method {
+		
+		case http.MethodPost:
+			log.Println("🔍 Début du traitement de la méthode POST pour créer un test profile")
+
+			var profile testProfile
+			if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+				log.Printf("❌ Erreur de décodage des données du test profile : %v\n", err)
+				http.Error(w, "Erreur de décodage des données du test profile", http.StatusBadRequest)
+				return
+			}
+
+			log.Printf("📦 Test profile reçu : %+v\n", profile)
+
+			if err := saveTestProfileToDB(db, profile); err != nil {
+				log.Printf("❌ Erreur lors de l'enregistrement du test profile : %v\n", err)
+				http.Error(w, "Erreur lors de l'enregistrement du test profile", http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf("✅ Test profile enregistré avec succès : %+v\n", profile)
+
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(profile)
+
+		case http.MethodGet:
+			log.Println("🔍 Début du traitement de la méthode GET pour récupérer les test profiles")
+
+			profiles, err := getTestProfilesFromDB(db)
+			if err != nil {
+				log.Printf("❌ Erreur lors de la récupération des test profiles : %v\n", err)
+				http.Error(w, "Erreur lors de la récupération des test profiles", http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf("📦 Test profiles récupérés depuis DB : %+v\n", profiles)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(profiles)
+
+		case http.MethodPut:
+			log.Println("🔍 Début du traitement de la méthode PUT pour mettre à jour un test profile")
+
+			var profile testProfile
+			if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
+				log.Printf("❌ Erreur de décodage des données du test profile : %v\n", err)
+				http.Error(w, "Erreur de décodage des données du test profile", http.StatusBadRequest)
+				return
+			}
+
+			log.Printf("📦 Test profile à mettre à jour : %+v\n", profile)
+
+			if err := updateTestProfileInDB(db, profile); err != nil {
+				log.Printf("❌ Erreur lors de la mise à jour du test profile : %v\n", err)
+				http.Error(w, "Erreur lors de la mise à jour du test profile", http.StatusInternalServerError)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(profile)
+
+		case http.MethodDelete:
+			log.Println("🔍 Début du traitement de la méthode DELETE pour supprimer un test profile")
+
+			idStr := r.URL.Query().Get("id")
+			if idStr == "" {
+				log.Println("❌ L'ID du test profile est requis pour suppression")
+				http.Error(w, "L'ID du test profile est requis", http.StatusBadRequest)
+				return
+			}
+
+			id, err := strconv.Atoi(idStr)
+			if err != nil {
+				log.Printf("❌ L'ID du test profile doit être un entier : %v\n", err)
+				http.Error(w, "L'ID du test profile doit être un entier", http.StatusBadRequest)
+				return
+			}
+
+			if err := deleteTestProfileFromDB(db, id); err != nil {
+				log.Printf("❌ Erreur lors de la suppression du test profile : %v\n", err)
+				http.Error(w, "Erreur lors de la suppression du test profile", http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"success": true}`))
+
+		default:
+			log.Printf("❌ Méthode non autorisée : %s\n", r.Method)
+			http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func handleThreshold(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		switch r.Method {
+		case http.MethodPost:
+			log.Println("🔍 Début du traitement de la méthode POST pour créer un threshold")
+
+			var threshold Threshold
+			if err := json.NewDecoder(r.Body).Decode(&threshold); err != nil {
+				log.Printf("❌ Erreur de décodage des données du threshold : %v\n", err)
+				http.Error(w, "Erreur de décodage des données du threshold", http.StatusBadRequest)
+				return
+			}
+
+			// Ne pas inclure activeThresholds et disabledThresholds envoyés par le frontend.
+			// Seulement AvgStatus, MinStatus et MaxStatus doivent être traités.
+
+			log.Printf("📦 Threshold reçu : %+v\n", threshold)
+
+			// Enregistrer le threshold dans la base de données
+			if err := saveThresholdToDB(db, threshold); err != nil {
+				log.Printf("❌ Erreur lors de l'enregistrement du threshold : %v\n", err)
+				http.Error(w, "Erreur lors de l'enregistrement du threshold", http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf("✅ Threshold enregistré avec succès : %+v\n", threshold)
+
+			// Générer les listes activeThresholds et disabledThresholds
+			setThresholdStatusLists(&threshold)
+
+			// Répondre avec le threshold, incluant les listes générées
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(threshold)
+
+		case http.MethodGet:
+			log.Println("🔍 Début du traitement de la méthode GET pour récupérer les thresholds")
+
+			thresholds, err := getThresholdsFromDB(db)
+			if err != nil {
+				log.Printf("❌ Erreur lors de la récupération des thresholds : %v\n", err)
+				http.Error(w, "Erreur lors de la récupération des thresholds", http.StatusInternalServerError)
+				return
+			}
+
+			log.Printf("📦 Thresholds récupérés depuis DB : %+v\n", thresholds)
+
+			// Générer les listes activeThresholds et disabledThresholds pour chaque threshold récupéré
+			for i := range thresholds {
+				setThresholdStatusLists(&thresholds[i])
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(thresholds)
+
+		case http.MethodPut:
+			log.Println("🔍 Début du traitement de la méthode PUT pour mettre à jour un threshold")
+
+			var threshold Threshold
+			if err := json.NewDecoder(r.Body).Decode(&threshold); err != nil {
+				log.Printf("❌ Erreur de décodage des données du threshold : %v\n", err)
+				http.Error(w, "Erreur de décodage des données du threshold", http.StatusBadRequest)
+				return
+			}
+
+			log.Printf("📦 Threshold à mettre à jour : %+v\n", threshold)
+
+			// Mettre à jour le threshold dans la base de données
+			if err := updateThresholdInDB(db, threshold); err != nil {
+				log.Printf("❌ Erreur lors de la mise à jour du threshold : %v\n", err)
+				http.Error(w, "Erreur lors de la mise à jour du threshold", http.StatusInternalServerError)
+				return
+			}
+
+			// Générer les listes activeThresholds et disabledThresholds pour la mise à jour
+			setThresholdStatusLists(&threshold)
+
+			// Répondre avec le threshold mis à jour
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(threshold)
+
+		case http.MethodDelete:
+			log.Println("🔍 Début du traitement de la méthode DELETE pour supprimer un threshold")
+
+			idStr := r.URL.Query().Get("id")
+			if idStr == "" {
+				log.Println("❌ L'ID du threshold est requis pour suppression")
+				http.Error(w, "L'ID du threshold est requis", http.StatusBadRequest)
+				return
+			}
+
+			id, err := strconv.ParseInt(idStr, 10, 64)
+			if err != nil {
+				log.Printf("❌ L'ID du threshold doit être un entier : %v\n", err)
+				http.Error(w, "L'ID du threshold doit être un entier", http.StatusBadRequest)
+				return
+			}
+
+			if err := deleteThresholdFromDB(db, id); err != nil {
+				log.Printf("❌ Erreur lors de la suppression du threshold : %v\n", err)
+				http.Error(w, "Erreur lors de la suppression du threshold", http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"success": true}`))
+
+		default:
+			log.Printf("❌ Méthode non autorisée : %s\n", r.Method)
+			http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
+		}
+	}
+}
 
 
 

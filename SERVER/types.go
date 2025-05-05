@@ -35,8 +35,42 @@ type plannedtest struct {
 type agentGroup struct {
 	ID             int       `json:"id"`
 	GroupName     string    `json:"group_name"`
-	NumberOfAgents  int64     `json:"number_of_agents"`
-	CreationDate   time.Time `json:"creation_date"` // type Timestamp with Time Zone
+	NumberOfAgents  int       `json:"number_of_agents"`
+	CreationDate   time.Time `json:"creation_date"` 
 }
+
+type testProfile struct {
+	ID           int              `json:"id"`
+	ProfileName  string           `json:"profile_name"`
+	CreationDate time.Time        `json:"creation_date"` 
+	PacketSize   int		      `json:"packet_size"`
+}
+
+type Threshold struct {
+	ID                uint     `json:"id"`
+	Name              string   `json:"name"`
+	CreationDate      string   `json:"creation_date"`
+	Avg               float64  `json:"avg"`
+	Min               float64  `json:"min"`
+	Max               float64  `json:"max"`
+	AvgStatus         bool     `json:"avg_status"`
+	MinStatus         bool     `json:"min_status"`
+	MaxStatus         bool     `json:"max_status"`
+	AvgOpr            string   `json:"avg_opr"`
+	MinOpr            string   `json:"min_opr"`
+	MaxOpr            string   `json:"max_opr"`
+	
+	ActiveThresholds  []string `json:"active_threshold"`
+	DisabledThresholds []string `json:"disabled_threshold"`
+}
+
+
+
+
+
+
+
+
+
 
 
