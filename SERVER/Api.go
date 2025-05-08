@@ -7,9 +7,10 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
-	"strings"
+
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
@@ -23,26 +24,19 @@ type Test struct {
 }
 
 func enableCORS(w http.ResponseWriter, r *http.Request) {
-    origin := r.Header.Get("Origin")
-    if origin != "" {
-        w.Header().Set("Access-Control-Allow-Origin", origin)
-    } else {
-        w.Header().Set("Access-Control-Allow-Origin", "*")
-    }
-    w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-    w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-    w.Header().Set("Access-Control-Allow-Credentials", "true")
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+	} else {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	}
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
 }
 
 var tests = []Test{}
 var mu sync.Mutex
-
-// Fonction qui envoie un paquet pour un test
-func sendTestPacket() {
-	fmt.Println("Envoi du paquet de test...")
-	time.Sleep(2 * time.Second) // Simuler l'envoi
-	fmt.Println("Paquet envoyé avec succès!")
-}
 
 // Route POST pour démarrer un test
 func startTest(w http.ResponseWriter, r *http.Request) {
@@ -56,16 +50,15 @@ func startTest(w http.ResponseWriter, r *http.Request) {
 		StartTime: time.Now(),
 	}
 
-	// Démarre l'envoi du paquet de test
-	go sendTestPacket()
+	// Démarre l'envoi du paquet de test avec la fonction client
+	go client()
 
-	// Simuler un délai pour le test
 	time.Sleep(5 * time.Second)
 
 	// Mettre à jour le test
 	newTest.Status = "Terminé"
 	newTest.EndTime = time.Now()
-	newTest.TestResult = "Résultat du test ici..."
+	newTest.TestResult = "Résultat du test ici..." // Remplacer par les résultats réels
 
 	// Ajouter le test à la liste
 	tests = append(tests, newTest)
@@ -81,64 +74,64 @@ func getTestResults(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAgents(db *sql.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        enableCORS(w,r)
+	return func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w, r)
 
-        if r.Method == http.MethodOptions {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 
-        w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json")
 
-        switch r.Method {
-        case http.MethodGet:
-            // 🔍 Récupérer tous les agents
-            agents, err := getAgentsFromDB(db)
-            if err != nil {
-                http.Error(w, "Erreur lors de la récupération des agents", http.StatusInternalServerError)
-                return
-            }
-            json.NewEncoder(w).Encode(agents)
+		switch r.Method {
+		case http.MethodGet:
+			// 🔍 Récupérer tous les agents
+			agents, err := getAgentsFromDB(db)
+			if err != nil {
+				http.Error(w, "Erreur lors de la récupération des agents", http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(agents)
 
-        case http.MethodPost:
-            // ➕ Ajouter un agent
-            var agent Agent
-            if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
-                http.Error(w, "Erreur lors de la lecture des données", http.StatusBadRequest)
-                return
-            }
+		case http.MethodPost:
+			// ➕ Ajouter un agent
+			var agent Agent
+			if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
+				http.Error(w, "Erreur lors de la lecture des données", http.StatusBadRequest)
+				return
+			}
 
-            // Log des données reçues pour débogage
-            log.Printf("Données reçues pour l'agent: %+v\n", agent)
+			// Log des données reçues pour débogage
+			log.Printf("Données reçues pour l'agent: %+v\n", agent)
 
-            // Validation des données
-            if agent.Name == "" || agent.Address == "" || agent.Availability == 0 {
-                http.Error(w, "Données manquantes", http.StatusBadRequest)
-                return
-            }
+			// Validation des données
+			if agent.Name == "" || agent.Address == "" || agent.Availability == 0 {
+				http.Error(w, "Données manquantes", http.StatusBadRequest)
+				return
+			}
 
-            // Si les données sont valides, on les insère dans la base
-            if err := saveAgentToDB(db, agent); err != nil {
-                http.Error(w, "Erreur lors de la sauvegarde", http.StatusInternalServerError)
-                return
-            }
+			// Si les données sont valides, on les insère dans la base
+			if err := saveAgentToDB(db, agent); err != nil {
+				http.Error(w, "Erreur lors de la sauvegarde", http.StatusInternalServerError)
+				return
+			}
 
-            // Retourner l'agent créé avec son ID
-            json.NewEncoder(w).Encode(agent)
+			// Retourner l'agent créé avec son ID
+			json.NewEncoder(w).Encode(agent)
 
-        case http.MethodPut:
-            // ✏️ Mettre à jour un agent
-            var agent Agent
-            if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
-                http.Error(w, "Erreur lors de la lecture des données", http.StatusBadRequest)
-                return
-            }
-            if err := updateAgentInDB(db, agent); err != nil {
-                http.Error(w, "Erreur lors de la mise à jour", http.StatusInternalServerError)
-                return
-            }
-            w.Write([]byte(`{"message":"Agent mis à jour avec succès"}`))
+		case http.MethodPut:
+			// ✏️ Mettre à jour un agent
+			var agent Agent
+			if err := json.NewDecoder(r.Body).Decode(&agent); err != nil {
+				http.Error(w, "Erreur lors de la lecture des données", http.StatusBadRequest)
+				return
+			}
+			if err := updateAgentInDB(db, agent); err != nil {
+				http.Error(w, "Erreur lors de la mise à jour", http.StatusInternalServerError)
+				return
+			}
+			w.Write([]byte(`{"message":"Agent mis à jour avec succès"}`))
 
 		case http.MethodDelete:
 			// Extraire l'ID de l'URL (dans le chemin)
@@ -148,31 +141,29 @@ func handleAgents(db *sql.DB) http.HandlerFunc {
 				http.Error(w, "ID invalide pour la suppression", http.StatusBadRequest)
 				return
 			}
-		
+
 			log.Printf("Suppression de l'agent avec ID : %d\n", id)
-		
+
 			// Suppression de l'agent dans la base de données
 			if err := deleteAgentFromDB(db, id); err != nil {
 				log.Printf("Erreur lors de la suppression de l'agent avec ID %d: %v\n", id, err)
 				http.Error(w, fmt.Sprintf("Erreur lors de la suppression de l'agent avec ID %d", id), http.StatusInternalServerError)
 				return
 			}
-		
+
 			// Répondre avec un message de succès
 			w.WriteHeader(http.StatusOK) // Code de statut 200 OK
 			w.Write([]byte(`{"message":"Agent supprimé avec succès"}`))
-		
+
 		default:
 			http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		}
-		
-		
-    }
+	}
 }
 
-func handlePlannedTests(db *sql.DB) http.HandlerFunc {
+func handleTests(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		enableCORS(w,r)
+		enableCORS(w, r)
 
 		// Vérifier la méthode HTTP
 		switch r.Method {
@@ -197,7 +188,7 @@ func handlePlannedTests(db *sql.DB) http.HandlerFunc {
 
 			// Vérifier si TestDuration est vide et attribuer une valeur par défaut si nécessaire
 			if test.TestDuration == "" {
-				test.TestDuration = "0s"  // Par défaut, si vide
+				test.TestDuration = "0s" // Par défaut, si vide
 			}
 
 			// Vérifier si la durée du test est dans un format valide
@@ -224,7 +215,7 @@ func handlePlannedTests(db *sql.DB) http.HandlerFunc {
 		case http.MethodGet:
 			log.Println("🔍 Début du traitement de la méthode GET pour récupérer les tests planifiés")
 
-			tests, err := getPlannedTestsFromDB(db)
+			tests, err := getTestsFromDB(db)
 			if err != nil {
 				log.Printf("❌ Erreur lors de la récupération des tests : %v\n", err)
 				http.Error(w, "Erreur lors de la récupération des tests", http.StatusInternalServerError)
@@ -249,7 +240,7 @@ func handlePlannedTests(db *sql.DB) http.HandlerFunc {
 			// Log après la décodification des données
 			log.Printf("📦 Test à mettre à jour : %+v\n", test)
 
-			if err := updatePlannedTestInDB(db, test); err != nil {
+			if err := updateTestInDB(db, test); err != nil {
 				log.Printf("❌ Erreur lors de la mise à jour du test : %v\n", err)
 				http.Error(w, "Erreur lors de la mise à jour du test", http.StatusInternalServerError)
 				return
@@ -276,7 +267,7 @@ func handlePlannedTests(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			if err := deletePlannedTestFromDB(db, id); err != nil {
+			if err := deleteTestFromDB(db, id); err != nil {
 				log.Printf("❌ Erreur lors de la suppression du test : %v\n", err)
 				http.Error(w, "Erreur lors de la suppression du test", http.StatusInternalServerError)
 				return
@@ -293,10 +284,9 @@ func handlePlannedTests(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-
 func handleAgentGroup(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-	
+
 		// Vérifier la méthode HTTP
 		switch r.Method {
 		// Méthode POST : Créer un groupe d'agents
@@ -366,38 +356,38 @@ func handleAgentGroup(db *sql.DB) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(agentGroup)
 
-		// Méthode DELETE : Supprimer un groupe d'agents
-	case http.MethodDelete:
-		log.Println("🔍 Début du traitement de la méthode DELETE pour supprimer un groupe d'agents")
-	
-		idStr := r.URL.Query().Get("id")
-		if idStr == "" {
-			log.Println("❌ L'ID du groupe est requis pour suppression")
-			http.Error(w, "L'ID du groupe est requis", http.StatusBadRequest)
-			return
-		}
-	
-		id, err := strconv.Atoi(idStr)
-		if err != nil {
-			log.Printf("❌ L'ID du groupe doit être un entier : %v\n", err)
-			http.Error(w, "L'ID du groupe doit être un entier", http.StatusBadRequest)
-			return
-		}
-	
-		if err := deleteAgentGroupFromDB(db, id); err != nil {
-			log.Printf("❌ Erreur lors de la suppression du groupe : %v\n", err)
-			http.Error(w, "Erreur lors de la suppression du groupe", http.StatusInternalServerError)
-			return
-		}
-	
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"success": true}`))
-	
-	default:
-		log.Printf("❌ Méthode non autorisée : %s\n", r.Method)
-		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
-	
+			// Méthode DELETE : Supprimer un groupe d'agents
+		case http.MethodDelete:
+			log.Println("🔍 Début du traitement de la méthode DELETE pour supprimer un groupe d'agents")
+
+			idStr := r.URL.Query().Get("id")
+			if idStr == "" {
+				log.Println("❌ L'ID du groupe est requis pour suppression")
+				http.Error(w, "L'ID du groupe est requis", http.StatusBadRequest)
+				return
+			}
+
+			id, err := strconv.Atoi(idStr)
+			if err != nil {
+				log.Printf("❌ L'ID du groupe doit être un entier : %v\n", err)
+				http.Error(w, "L'ID du groupe doit être un entier", http.StatusBadRequest)
+				return
+			}
+
+			if err := deleteAgentGroupFromDB(db, id); err != nil {
+				log.Printf("❌ Erreur lors de la suppression du groupe : %v\n", err)
+				http.Error(w, "Erreur lors de la suppression du groupe", http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"success": true}`))
+
+		default:
+			log.Printf("❌ Méthode non autorisée : %s\n", r.Method)
+			http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
+
 		}
 	}
 }
@@ -406,7 +396,7 @@ func handleTestProfile(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		switch r.Method {
-		
+
 		case http.MethodPost:
 			log.Println("🔍 Début du traitement de la méthode POST pour créer un test profile")
 
@@ -515,9 +505,6 @@ func handleThreshold(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			// Ne pas inclure activeThresholds et disabledThresholds envoyés par le frontend.
-			// Seulement AvgStatus, MinStatus et MaxStatus doivent être traités.
-
 			log.Printf("📦 Threshold reçu : %+v\n", threshold)
 
 			// Enregistrer le threshold dans la base de données
@@ -616,6 +603,3 @@ func handleThreshold(db *sql.DB) http.HandlerFunc {
 		}
 	}
 }
-
-
-

@@ -50,8 +50,7 @@ func saveResultsToDB(db *sql.DB, qos QoSMetrics) error {
 	}
 	return err
 }
-
-// Insertion dans les tables
+// agent ****
 func saveAgentToDB(db *sql.DB, agent Agent) error {
 	err := db.QueryRow(`
 		INSERT INTO "Agent_List"("Name", "Address", "Test_health", "Availability")
@@ -69,7 +68,7 @@ func saveAgentToDB(db *sql.DB, agent Agent) error {
 	return nil
 }
 
-// Lecture des agents
+
 func getAgentsFromDB(db *sql.DB) ([]Agent, error) {
 	rows, err := db.Query(`SELECT id, "Name", "Address", "Test_health", "Availability" FROM "Agent_List"`)
 	if err != nil {
@@ -89,7 +88,7 @@ func getAgentsFromDB(db *sql.DB) ([]Agent, error) {
 	return agents, nil
 }
 
-// Mise à jour d’un agent
+
 
 func updateAgentInDB(db *sql.DB, agent Agent) error {
 	_, err := db.Exec(`
@@ -106,30 +105,60 @@ func updateAgentInDB(db *sql.DB, agent Agent) error {
 	return nil
 }
 
-// Suppression d’un agent
+
 func deleteAgentFromDB(db *sql.DB, agentID int) error {
-	_, err := db.Exec(`DELETE FROM "Agent_List" WHERE id = $1`, agentID)
+	res, err := db.Exec(`DELETE FROM "Agent_List" WHERE id = $1`, agentID)
 	if err != nil {
 		log.Printf("Erreur lors de la suppression : %v\n", err)
 		return err
 	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		log.Printf("Erreur lors de la récupération du nombre de lignes affectées : %v\n", err)
+		return err
+	}
+
+	if rowsAffected == 0 {
+		log.Printf("Aucun agent trouvé avec l'ID %d.\n", agentID)
+		return sql.ErrNoRows // <-- permet de détecter que rien n’a été supprimé
+	}
+
 	log.Println("Agent supprimé avec succès.")
 	return nil
 }
 
+
+// test **********
 func saveTestToDB(db *sql.DB, test plannedtest) error {
 	_, err := db.Exec(`
-		INSERT INTO "planned_test"(
+		INSERT INTO "test"(
 			"test_name", 
 			"test_duration",
 			"number_of_agents",
-			"creation_date"
-		) VALUES ($1, $2, $3, $4)
+			"creation_date",
+			"test_type",
+			"source_id",
+			"target_id",
+			"profile_id",
+			"threshold_id",
+			"waiting",
+			"failed",
+			"completed"
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`,
 		test.TestName,       // $1
 		test.TestDuration,   // $2
 		test.NumberOfAgents, // $3
 		test.CreationDate,   // $4
+		test.TestType,
+		test.SourceID,
+		test.TargetID,
+		test.ProfileID,
+		test.ThresholdID,
+		test.Waiting,
+		test.Failed,
+		test.Completed,
 	)
 
 	if err != nil {
@@ -140,44 +169,86 @@ func saveTestToDB(db *sql.DB, test plannedtest) error {
 	return nil
 }
 
-func getPlannedTestsFromDB(db *sql.DB) ([]plannedtest, error) {
-	rows, err := db.Query(`SELECT "Id", "test_name", "test_duration", "number_of_agents", "creation_date" FROM "planned_test"`)
+func getTestsFromDB(db *sql.DB) ([]plannedtest, error) {
+	rows, err := db.Query(`
+		SELECT 
+            "Id", 
+            "test_name", 
+            "test_duration", 
+            "number_of_agents", 
+            "creation_date", 
+            "test_type",
+            "source_id",
+            "target_id",
+            "profile_id",
+            "threshold_id",
+            "waiting",
+            "failed",
+            "completed"
+        FROM "test"
+    `)
 	if err != nil {
 		log.Printf("Erreur lors de la récupération des tests planifiés : %v\n", err)
 		return nil, err
 	}
 	defer rows.Close()
-
 	var tests []plannedtest
 	for rows.Next() {
 		var t plannedtest
-		err := rows.Scan(&t.ID, &t.TestName, &t.TestDuration, &t.NumberOfAgents, &t.CreationDate)
+		err := rows.Scan(
+			&t.ID,
+			&t.TestName,
+			&t.TestDuration,
+			&t.NumberOfAgents,
+			&t.CreationDate,
+			&t.TestType,         
+			&t.SourceID,    
+			&t.TargetID,     
+			&t.ProfileID,    
+			&t.ThresholdID,  
+			&t.Waiting,
+			&t.Failed,
+			&t.Completed,
+		)
 		if err != nil {
 			log.Printf("Erreur lors de la lecture des données du test : %v\n", err)
 			return nil, err
 		}
 		tests = append(tests, t)
 	}
-
 	if err := rows.Err(); err != nil {
 		log.Printf("Erreur lors du parcours des résultats : %v\n", err)
 		return nil, err
 	}
-
 	if len(tests) == 0 {
 		log.Println("Aucun test trouvé")
 	}
-
 	return tests, nil
 }
 
-func updatePlannedTestInDB(db *sql.DB, test plannedtest) error {
+func updateTestInDB(db *sql.DB, test plannedtest) error {
 	_, err := db.Exec(`
-		UPDATE "planned_test"
-		SET "test_name" = $1, "test_duration" = $2, "number_of_agents" = $3, "creation_date" = $4
-		WHERE "Id" = $5`,
-		test.TestName, test.TestDuration, test.NumberOfAgents, test.CreationDate, test.ID,
+		UPDATE "test"
+		SET 
+			"test_name" = $1, 
+			"test_duration" = $2, 
+			"number_of_agents" = $3, 
+			"creation_date" = $4, 
+			"test_type" = $5,                
+			"source_id" = $6,           
+			"target_id" = $7,           
+			"profile_id" = $8,          
+			"threshold_id" = $9,       
+			"waiting" = $10,           
+			"failed" = $11,           
+			"completed" = $12           
+		WHERE "Id" = $13             
+	`, 
+		test.TestName, test.TestDuration, test.NumberOfAgents, test.CreationDate,   
+		test.TestType,  test.SourceID, test.TargetID, test.ProfileID,      
+		test.ThresholdID,test.Waiting, test.Failed,test.Completed, test.ID,             
 	)
+
 	if err != nil {
 		log.Printf("Erreur lors de la mise à jour du test planifié avec ID %d : %v\n", test.ID, err)
 		return err
@@ -186,8 +257,9 @@ func updatePlannedTestInDB(db *sql.DB, test plannedtest) error {
 	return nil
 }
 
-func deletePlannedTestFromDB(db *sql.DB, testID int) error {
-	_, err := db.Exec(`DELETE FROM "planned_test" WHERE "Id" = $1`, testID)
+
+func deleteTestFromDB(db *sql.DB, testID int) error {
+	_, err := db.Exec(`DELETE FROM "test" WHERE "Id" = $1`, testID)
 	if err != nil {
 		log.Printf("Erreur lors de la suppression du test planifié avec ID %d : %v\n", testID, err)
 		return err
@@ -195,6 +267,10 @@ func deletePlannedTestFromDB(db *sql.DB, testID int) error {
 	log.Printf("Test planifié avec ID %d supprimé avec succès.\n", testID)
 	return nil
 }
+
+
+
+// agent groupe
 
 func saveAgentGroupToDB(db *sql.DB, group agentGroup) error {
 	_, err := db.Exec(`
@@ -273,6 +349,8 @@ func deleteAgentGroupFromDB(db *sql.DB, groupID int) error {
 	return nil
 }
 
+
+// test profile ***********
 func saveTestProfileToDB(db *sql.DB, profile testProfile) error {
 	_, err := db.Exec(`
 		INSERT INTO "test_profile"(
@@ -353,22 +431,31 @@ func deleteTestProfileFromDB(db *sql.DB, profileID int) error {
 	return nil
 }
 
+
+
+
+//threshold ***********
 func saveThresholdToDB(db *sql.DB, threshold Threshold) error {
+	log.Println("🟡 Insertion du threshold:", threshold)
+
     _, err := db.Exec(`
-        INSERT INTO "Threshold"(
-            "Name", 
-            "creation_date", 
-            "avg_status", 
-            "min_status", 
-            "max_status"
-        ) VALUES ($1, $2, $3, $4, $5)
-    `,
-        threshold.Name,               // $1
-        threshold.CreationDate,       // $2    
-        threshold.AvgStatus,          // $3
-        threshold.MinStatus,          // $4
-        threshold.MaxStatus,          // $5
-    )
+   INSERT INTO "Threshold"("Name", "creation_date", "avg", "min", "max", 
+        "avg_status", "min_status", "max_status", "avg_opr", "min_opr", "max_opr", "selected_metric")
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+
+    threshold.Name, 
+	threshold.CreationDate, 
+	threshold.Avg,
+	threshold.Min,
+	threshold.Max, 
+    threshold.AvgStatus,
+	threshold.MinStatus,
+	threshold.MaxStatus, 
+    threshold.AvgOpr,
+	threshold.MinOpr, 
+	threshold.MaxOpr, 
+	threshold.SelectedMetric, 
+)
 
     if err != nil {
         log.Println("❌ Erreur lors de l'insertion du Threshold :", err)
@@ -377,6 +464,7 @@ func saveThresholdToDB(db *sql.DB, threshold Threshold) error {
     log.Println("✅ Threshold enregistré avec succès.")
     return nil
 }
+
 
 func setThresholdStatusLists(threshold *Threshold) {
     // Initialiser les listes comme vides
@@ -407,12 +495,13 @@ func setThresholdStatusLists(threshold *Threshold) {
 
 
 func getThresholdsFromDB(db *sql.DB) ([]Threshold, error) {
-    rows, err := db.Query(`
-        SELECT "ID", "Name", "creation_date", "avg", "min", "max", 
-               "avg_status", "min_status", "max_status", 
-               "avg_opr", "min_opr", "max_opr"
-        FROM "Threshold"
-    `)
+	rows, err := db.Query(`
+   		 SELECT "ID", "Name", "creation_date", "avg", "min", "max", 
+           "avg_status", "min_status", "max_status", 
+           "avg_opr", "min_opr", "max_opr" , "selected_metric"
+   		 FROM "Threshold"
+	`)
+
     if err != nil {
         return nil, err
     }
@@ -421,12 +510,21 @@ func getThresholdsFromDB(db *sql.DB) ([]Threshold, error) {
     var thresholds []Threshold
     for rows.Next() {
         var t Threshold
-        err := rows.Scan(&t.ID, &t.Name, &t.CreationDate,
-            &t.Avg, &t.Min, &t.Max,
-            &t.AvgStatus, &t.MinStatus, &t.MaxStatus,
-            &t.AvgOpr, &t.MinOpr, &t.MaxOpr)
+		err := rows.Scan(&t.ID, &t.Name, &t.CreationDate,
+			&t.Avg, &t.Min, &t.Max,
+			&t.AvgStatus, &t.MinStatus, &t.MaxStatus,
+			&t.AvgOpr, &t.MinOpr, &t.MaxOpr , &t.SelectedMetric)
+		
         if err != nil {
             return nil, err
+        }
+
+        // Assure que les listes sont bien initialisées comme vides
+        if t.ActiveThresholds == nil {
+            t.ActiveThresholds = []string{}
+        }
+        if t.DisabledThresholds == nil {
+            t.DisabledThresholds = []string{}
         }
 
         // Appel à la fonction setThresholdStatusLists pour remplir les listes
@@ -437,18 +535,17 @@ func getThresholdsFromDB(db *sql.DB) ([]Threshold, error) {
     return thresholds, nil
 }
 
-
-
 func updateThresholdInDB(db *sql.DB, threshold Threshold) error {
     _, err := db.Exec(`
         UPDATE "Threshold"
-        SET "Name" = $1, "creation_date" = $2, "active_Threshold" = $3, "disabled_Threshold" = $4,
-            "avg" = $5, "min" = $6, "max" = $7, "avg_status" = $8, "min_status" = $9, "max_status" = $10,
-            "avg_opr" = $11, "min_opr" = $12, "max_opr" = $13
-        WHERE "ID" = $14
+        SET "Name" = $1, "creation_date" = $2,
+            "avg" = $3, "min" = $4, "max" = $5,
+            "avg_status" = $6, "min_status" = $7, "max_status" = $8,
+            "avg_opr" = $9, "min_opr" = $10, "max_opr" = $11 , "selected_metric" = $12
+        WHERE "ID" = $13
     `,
         threshold.Name,              // $1
-        threshold.CreationDate,      // $2 
+        threshold.CreationDate,      // $2
         threshold.Avg,               // $3
         threshold.Min,               // $4
         threshold.Max,               // $5
@@ -456,17 +553,19 @@ func updateThresholdInDB(db *sql.DB, threshold Threshold) error {
         threshold.MinStatus,         // $7
         threshold.MaxStatus,         // $8
         threshold.AvgOpr,            // $9
-        threshold.MinOpr,            // $11
+        threshold.MinOpr,            // $10
         threshold.MaxOpr,            // $11
-        threshold.ID,                // $12
+		threshold.SelectedMetric,    // $12        
+        threshold.ID,                // $13           
     )
     if err != nil {
-        log.Printf("Erreur lors de la mise à jour du threshold avec ID %d : %v\n", threshold.ID, err)
+        log.Printf("❌ Erreur lors de la mise à jour du threshold avec ID %d : %v\n", threshold.ID, err)
         return err
     }
-    log.Printf("Threshold avec ID %d mis à jour avec succès.\n", threshold.ID)
+    log.Printf("✅ Threshold avec ID %d mis à jour avec succès.\n", threshold.ID)
     return nil
 }
+
 
 func deleteThresholdFromDB(db *sql.DB, thresholdID int64) error {
     _, err := db.Exec(`

@@ -29,8 +29,18 @@ type plannedtest struct {
 	TestName       string    `json:"test_name"`
 	TestDuration   string    `json:"test_duration"`   
 	NumberOfAgents int       `json:"number_of_agents"`
-	CreationDate   time.Time `json:"creation_date"`   
-}
+	CreationDate   time.Time `json:"creation_date"`  
+
+	TestType     string       `json:"test_type"`          
+	SourceID     int          `json:"source_id"`      
+	TargetID     int          `json:"target_id"`      
+	ProfileID    int          `json:"profile_id"`     
+	ThresholdID  int          `json:"threshold_id"`   
+	Waiting      bool         `json:"waiting"`        
+	Failed       bool         `json:"failed"`         
+	Completed    bool          `json:"completed"`	
+}	
+
 
 type agentGroup struct {
 	ID             int       `json:"id"`
@@ -59,9 +69,10 @@ type Threshold struct {
 	AvgOpr            string   `json:"avg_opr"`
 	MinOpr            string   `json:"min_opr"`
 	MaxOpr            string   `json:"max_opr"`
+	SelectedMetric     string   `json:"selected_metric"`
 	
-	ActiveThresholds  []string `json:"active_threshold"`
-	DisabledThresholds []string `json:"disabled_threshold"`
+	ActiveThresholds  []string `json:"active_thresholds"`
+	DisabledThresholds []string `json:"disabled_thresholds"`
 }
 
 

@@ -475,11 +475,12 @@ func main() {
 	http.HandleFunc("/api/test/start", startTest)
 	http.HandleFunc("/api/test/results", getTestResults)
 	http.HandleFunc("/api/agents", handleAgents(db))
-	http.HandleFunc("/api/planned-tests", handlePlannedTests(db))
+	
 	http.HandleFunc("/api/agent-group", handleAgentGroup(db))
 	http.HandleFunc("/api/test-profile", handleTestProfile(db))
 	http.HandleFunc("/api/threshold", handleThreshold(db))
 
+	http.HandleFunc("/api/tests", handleTests(db))
 
 	// Configurer CORS
 	c := cors.New(cors.Options{
