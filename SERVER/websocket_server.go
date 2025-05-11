@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	"fmt"
 	"github.com/gorilla/websocket"
 )
 
@@ -51,10 +52,14 @@ func StartWebSocketServer() {
 	// Enregistre le handler WebSocket
 	http.HandleFunc("/ws", handleWebSocket)
 
+	// Adresse configurée
+	addr := fmt.Sprintf("%s:%d", AppConfig.WebSocket.Address, AppConfig.WebSocket.Port)
+
+
 	// Lance le serveur WebSocket dans une goroutine pour ne pas bloquer
 	go func() {
 		log.Println("🚀 Serveur WebSocket lancé sur le port 8080...")
-		if err := http.ListenAndServe(":8080", nil); err != nil {
+		if err := http.ListenAndServe(addr, nil); err != nil {
 			log.Fatalf("Erreur WebSocket: %v", err)
 		}
 	}()

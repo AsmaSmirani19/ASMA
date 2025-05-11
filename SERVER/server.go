@@ -179,7 +179,7 @@ func SendTCPPacket(packet []byte, addr string, port int) error {
 
 // receivePacket_ reçoit un paquet via TCP
 func receiveTCPPacket() ([]byte, error) {
-	listener, err := net.Listen("tcp", ":60000")
+	listener, err := net.Listen("tcp", AppConfig.Server.TCPListener.Address)
 	if err != nil {
 		return nil, fmt.Errorf("erreur de création du listener: %v", err)
 	}
@@ -216,11 +216,12 @@ func identifyPacketType(data []byte) string {
 
 func client() {
 
-	const (
-		serverAddress = "127.0.0.1"
-		serverPort    = 60001
-		senderPort    = 6000
-		receiverPort  = 5000
+	var (
+		serverAddress = AppConfig.Network.ServerAddress
+		serverPort    = AppConfig.Network.ServerPort
+		senderPort    = AppConfig.Network.SenderPort
+		receiverPort  = AppConfig.Network.ReceiverPort
+		timeout       = AppConfig.Network.Timeout
 	)
 
 	// 1. Envoyer le paquet Session Request
@@ -230,11 +231,11 @@ func client() {
 			copy(ip[:], net.ParseIP("127.0.0.1").To16())
 			return ip
 		}(),
-		ReceiverPort:  receiverPort,
-		SenderPort:    senderPort,
+		ReceiverPort:  uint16(receiverPort),
+		SenderPort:    uint16(senderPort), 
 		PaddingLength: 0,
 		StartTime:     uint32(time.Now().Unix()),
-		Timeout:       30,
+		Timeout:       uint32(timeout),
 		TypeP:         0x00,
 	}
 
@@ -298,13 +299,13 @@ func client() {
 
 func Serveur() {
 	// Démarrer un serveur TCP sur le port 5001
-	listener, err := net.Listen("tcp", ":60000")
-	if err != nil {
-		log.Fatalf("Erreur de serveur TCP : %v", err)
-	}
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", AppConfig.Network.ServerPort))
+if err != nil {
+    log.Fatalf("Erreur de serveur TCP : %v", err)
+}
 	defer listener.Close()
 
-	log.Println("Serveur en attente de connexions sur le port 60000...")
+	log.Println("Serveur en attente de connexions sur le port 61000...")
 
 	for {
 		// Accepter une nouvelle connexion
@@ -389,11 +390,12 @@ func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTes
 	testCmd := &testpb.QuickTestMessage{
 		Message: &testpb.QuickTestMessage_Request{
 			Request: &testpb.QuickTestRequest{
-				TestId:     "test_001",
-				Parameters: "ping 8.8.8.8",
+				TestId:    "test_001",
+				Parameters: AppConfig.QuickTest.Parameters, // ← ici avec ":"
 			},
 		},
 	}
+
 
 	if err := stream.Send(testCmd); err != nil {
 		log.Printf("Erreur d'envoi de la commande: %v", err)
@@ -448,7 +450,7 @@ func listenToTestResultsAndStore(db *sql.DB) {
 
 // startGRPCServer démarre le serveur gRPC.
 func startGRPCServer() {
-	listener, err := net.Listen("tcp", ":50051")
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", AppConfig.GRPC.Port))
 	if err != nil {
 		log.Fatalf("Échec de l'écoute sur le port 50051 : %v", err)
 	}
@@ -463,67 +465,58 @@ func startGRPCServer() {
 
 }
 
-func main() {
-	// Initialisation de la connexion à la base de données
-	db, err := connectToDB()
-	if err != nil {
-		log.Fatalf("Erreur de connexion DB : %v", err)
+	func main() {
+
+		LoadConfig("config_server.yaml")
+
+		// 5. 📡 Lancement du serveur WebSocket sur un port séparé
+		go StartWebSocketServer()  
+
+		// 1. 🔌 Connexion à la base de données
+		db, err := connectToDB()
+		if err != nil {
+			log.Fatalf("Erreur de connexion DB : %v", err)
+		}
+		defer db.Close()
+	
+		// 2. 🌐 Définition des routes REST HTTP
+		http.HandleFunc("/api/test/start", startTest)
+		http.HandleFunc("/api/test/results", getTestResults)
+		http.HandleFunc("/api/agents", handleAgents(db))
+		http.HandleFunc("/api/agent-group", handleAgentGroup(db))
+		http.HandleFunc("/api/test-profile", handleTestProfile(db))
+		http.HandleFunc("/api/threshold", handleThreshold(db))
+		http.HandleFunc("/api/tests", handleTests(db))
+	
+		
+	
+		// 3.  🌍 Configuration CORS
+		c := cors.New(cors.Options{
+			AllowedOrigins: []string{"http://localhost:4200"},
+			AllowedMethods: []string{"GET", "POST", "DELETE", "PUT"},
+			AllowedHeaders: []string{"Content-Type", "Authorization"},
+		})
+		handler := c.Handler(http.DefaultServeMux)
+	
+		// 4. 🚀  Lancement du serveur HTTP (REST API)
+		go func() {
+			fmt.Println("🌐 Serveur HTTP lancé sur http://localhost:5000")
+			log.Fatal(http.ListenAndServe(":5000", handler))
+		}()
+	
+		
+	
+		// 6. 🚀 Lancement du serveur gRPC
+		go startGRPCServer()
+	
+		// 7. Ecoute et traitement des résultats de test
+		go listenToTestResultsAndStore(db)
+	
+		// 8.  🔄 Démarrage de composants spécifiques (testeurs, etc.)
+		go Serveur()
+		go client()
+	
+		// 9.  🛑Empêche le programme de se terminer
+		select {}
 	}
-	defer db.Close()
-
-	// Définir les routes HTTP
-	http.HandleFunc("/api/test/start", startTest)
-	http.HandleFunc("/api/test/results", getTestResults)
-	http.HandleFunc("/api/agents", handleAgents(db))
 	
-	http.HandleFunc("/api/agent-group", handleAgentGroup(db))
-	http.HandleFunc("/api/test-profile", handleTestProfile(db))
-	http.HandleFunc("/api/threshold", handleThreshold(db))
-
-	http.HandleFunc("/api/tests", handleTests(db))
-
-	// Configurer CORS
-	c := cors.New(cors.Options{
-		AllowedOrigins: []string{"http://localhost:4200"}, // Autoriser l'origine Angular
-		AllowedMethods: []string{"GET", "POST", "DELETE", "PUT"}, // Méthodes autorisées
-		AllowedHeaders: []string{"Content-Type", "Authorization"},
-	})
-
-	// Wrap du serveur avec le handler CORS
-	handler := c.Handler(http.DefaultServeMux)
-
-	// Démarrer le serveur HTTP dans une goroutine
-	go func() {
-		fmt.Println("Serveur HTTP lancé sur http://localhost:5000")
-		log.Fatal(http.ListenAndServe(":5000", handler))
-	}()
-
-	// Démarrer le serveur gRPC dans une goroutine
-	go startGRPCServer()
-	
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-	
-
-	// Écouter les résultats des tests et les stocker dans la base de données
-	//go listenToTestResultsAndStore(db)
-
-	// Démarrer des serveurs ou clients
-	//go Serveur()
-	//go client()
-
-	// Bloquer le programme pour qu'il reste actif
-	select {}
-}

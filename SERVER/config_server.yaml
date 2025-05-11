@@ -1,0 +1,28 @@
+server:
+  tcp_listener:
+    address: ":61000"  # Adresse et port pour l'écoute TCP
+
+network:
+  server_address: "127.0.0.1"
+  server_port: 61000
+  sender_port: 6000
+  receiver_port: 5000
+  timeout: 30 
+
+quick_test:
+  parameters: "ping 8.8.8.8"
+
+
+grpc:
+  address: "127.0.0.1"
+  port: 50051
+
+websocket:
+  address: "127.0.0.1"
+  port: 8080
+
+kafka:
+  brokers:
+    - "127.0.0.1:9092"
+  test_request_topic: "test-requests"
+

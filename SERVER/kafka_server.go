@@ -11,8 +11,8 @@ import (
 func SendTestRequestToKafka(testCommand string) {
 	// Création du writer Kafka (producteur)
 	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers:  []string{"127.0.0.1:9092"}, // Adresse du broker Kafka
-		Topic:    "test-requests",            // Topic où les demandes de test seront envoyées
+		Brokers:  AppConfig.Kafka.Brokers,
+		Topic:    AppConfig.Kafka.TestRequestTopic,
 		Balancer: &kafka.LeastBytes{},
 	})
 	defer writer.Close()
