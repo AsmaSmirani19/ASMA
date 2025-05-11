@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"log"
+
 	"mon-projet-go/testpb"
 	"net"
 	"strconv"
@@ -101,12 +102,13 @@ func SendPacket(packet []byte, addr string, port int) error {
 
 // Réception d'un paquet UDP
 func receivePacket() ([]byte, error) {
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 5000})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: AppConfig.Network.ListenPort})
+
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	buffer := make([]byte, 1500)
+	buffer := make([]byte, AppConfig.Network.PacketSize)
 
 	// Lire les données envoyées via UDP
 	n, _, err := conn.ReadFromUDP(buffer)
@@ -187,12 +189,11 @@ type TestParams struct {
 // Extraire  les paramètres
 func parseTestParameters(input string) (*TestParams, error) {
 	params := &TestParams{
-		// Valeurs par défaut
-		TargetIP:       "127.0.0.1",
-		TargetPort:     5000,
-		Duration:       30 * time.Second,
-		PacketInterval: 1 * time.Second,
-	}
+        TargetIP:       AppConfig.DefaultTest.TargetIP,
+        TargetPort:     AppConfig.DefaultTest.TargetPort,
+        Duration:       AppConfig.DefaultTest.Duration,
+        PacketInterval: AppConfig.DefaultTest.Interval,
+    }
 
 	// Exemple de parsing simple (à adapter)
 	parts := strings.Split(input, ",")
@@ -247,8 +248,9 @@ var (
 
 // Fonction pour enregistrer les métriques les plus récentes
 func SetLatestMetrics(metrics *QoSMetrics) {
-	latestMetrics = metrics
+	metricsMutex.Lock()
 	defer metricsMutex.Unlock()
+	latestMetrics = metrics
 	fmt.Println("Les métriques ont été mises à jour :", latestMetrics)
 }
 
@@ -339,35 +341,44 @@ func handleReflector(data []byte) error {
 		return fmt.Errorf("erreur de sérialisation: %v", err)
 	}
 
-	return SendPacket(serializedtestPacket, "127.0.0.1", 5000)
+	return SendPacket(serializedtestPacket, AppConfig.Sender.IP, AppConfig.Sender.Port)
 }
+// Fonction qui gère l'écoute sur le port Reflector (UDP)
 func listenAsReflector() {
+	// Adresse du serveur (Reflector)
 	addr := net.UDPAddr{
-		Port: 9000, // le port où le sender envoie les paquets
-		IP:   net.ParseIP("127.0.0.1"),
+		Port: AppConfig.Reflector.Port, 
+		IP:   net.ParseIP(AppConfig.Reflector.IP), 
 	}
 
+	// Ouverture du socket UDP pour écouter les paquets
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
 		log.Fatalf("Erreur écoute UDP: %v", err)
 	}
 	defer conn.Close()
 
+	// Tampon pour recevoir les paquets
 	buffer := make([]byte, 1500)
 
 	log.Println("Reflector en écoute sur", addr.String())
 
+	// Boucle pour écouter les paquets en continu
 	for {
+		// Lecture d'un paquet depuis la connexion UDP
 		n, remoteAddr, err := conn.ReadFromUDP(buffer)
 		if err != nil {
-			log.Printf("Erreur lecture: %v", err)
-			continue
+			log.Printf("Erreur lecture paquet UDP: %v", err)
+			continue // Si erreur, on passe à l'itération suivante
 		}
 
+		log.Printf("Reçu %d octets de %s", n, remoteAddr.String())
+
+		// Lancer une goroutine pour gérer le paquet reçu (envoi de réponse ou traitement)
 		go func(data []byte, addr *net.UDPAddr) {
-			err := handleReflector(data[:n])
+			err := handleReflector(data)
 			if err != nil {
-				log.Printf("Erreur handleReflector: %v", err)
+				log.Printf("Erreur traitement paquet dans handleReflector: %v", err)
 			}
 		}(buffer[:n], remoteAddr)
 	}
@@ -453,7 +464,7 @@ func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTest
 }
 
 func startGRPCServer() {
-	lis, err := net.Listen("tcp", ":50052")
+	lis, err := net.Listen("tcp", AppConfig.GRPC.Port)
 	if err != nil {
 		log.Fatalf("Échec d'écoute : %v", err)
 	}
@@ -468,7 +479,7 @@ func startGRPCServer() {
 }
 func startClientStream() {
 	conn, err := grpc.Dial(
-		"localhost:50051",
+		AppConfig.Server.Main,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
 	)
@@ -496,16 +507,33 @@ func startClientStream() {
 }
 
 func main() {
+	log.Println("Démarrage de l'agent TWAMP...")
 
-	go listenToTestRequestsFromKafka()
+	LoadConfig("config.yaml")
+
+	// Mode Reflector TWAMP
 	go listenAsReflector()
 
-	// 1. Démarrage WebSocket pour les résultats temps réel
-	go StartWebSocketAgent()
-
-	// 2. Démarrage du serveur gRPC
+	// Serveur gRPC pour Quick Tests
 	go startGRPCServer()
 
-	// 3. Connexion au serveur principal et lancement du stream duplex
-	startClientStream()
+	// Attente du démarrage des services
+	time.Sleep(2 * time.Second)
+
+	// WebSocket QoS
+	go StartWebSocketAgent()
+
+	// Connexion au backend gRPC (client stream)
+	go startClientStream()
+
+	// Kafka
+	go listenToTestRequestsFromKafka()
+
+	// Blocage principal pour empêcher l'arrêt
+	select {}
 }
+
+
+	
+
+

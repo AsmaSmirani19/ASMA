@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-
+	"fmt"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -22,9 +22,9 @@ type TestResult struct {
 // Fonction qui écoute les demandes de test depuis Kafka
 func listenToTestRequestsFromKafka() {
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{"127.0.0.1:9092"},
-		Topic:   "test-requests",
-		GroupID: "test-group",
+		Brokers: AppConfig.Kafka.Brokers,
+		Topic:   AppConfig.Kafka.TestRequestTopic,
+		GroupID: AppConfig.Kafka.GroupID,
 	})
 	defer reader.Close()
 
@@ -48,10 +48,18 @@ func listenToTestRequestsFromKafka() {
 // Fonction pour exécuter un test et envoyer le résultat via Kafka
 func runTestAndSendResult() {
 	log.Println("Début du test QoS...")
-
 	ctx := context.Background()
-	params := "target=127.0.0.1&port=9000&duration=10s&interval=1s"
 
+	// Récupérer les informations du test à partir de la configuration
+	target := AppConfig.DefaultTest.TargetIP
+	port := AppConfig.DefaultTest.TargetPort
+	duration := AppConfig.DefaultTest.Duration
+	interval := AppConfig.DefaultTest.Interval
+
+	// Créer une chaîne avec les paramètres nécessaires
+	params := fmt.Sprintf("target=%s&port=%d&duration=%s&interval=%s", target, port, duration, interval)
+
+	// Appeler la fonction startTest avec une chaîne formatée
 	stats, qos, err := startTest(params)
 	if err != nil {
 		log.Printf("Erreur pendant le test : %v", err)
@@ -65,14 +73,13 @@ func runTestAndSendResult() {
 
 	// Construction de l'objet de résultat
 	result := TestResult{
-		AgentID:           "agent-001", // tu peux le rendre dynamique si t'as plusieurs agents
-		Target:            "127.0.0.1",
-		Port:              9000,
-		AvgThroughputKbps: qos.AvgThroughputKbps, // si tu as ce champ
+		AgentID:           AppConfig.Sender.ID,
+		Target:            AppConfig.DefaultTest.TargetIP,
+		Port:              AppConfig.DefaultTest.TargetPort,
+		AvgThroughputKbps: qos.AvgThroughputKbps,
 		AvgLatencyMs:      qos.AvgLatencyMs,
 		AvgJitterMs:       qos.AvgJitterMs,
-		PacketLossPercent: qos.PacketLossPercent, // si tu calcules ça
-
+		PacketLossPercent: qos.PacketLossPercent,
 	}
 
 	// Sérialisation en JSON
@@ -84,8 +91,8 @@ func runTestAndSendResult() {
 
 	// Envoi via Kafka
 	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers:  []string{"127.0.0.1:9092"},
-		Topic:    "test-results",
+		Brokers:  AppConfig.Kafka.Brokers,
+		Topic:    AppConfig.Kafka.TestResultTopic,
 		Balancer: &kafka.LeastBytes{},
 	})
 	defer writer.Close()
