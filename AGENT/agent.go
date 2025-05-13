@@ -77,12 +77,39 @@ func SerializeTwampTestPacket(packet *TwampTestPacket) ([]byte, error) {
 }
 
 func deserializeTwampTestPacket(data []byte, pkt *TwampTestPacket) error {
-	if len(data) < 42 {
-		return fmt.Errorf("paquet trop court")
+	if len(data) < 49 {
+		return fmt.Errorf("paquet trop court: %d octets", len(data))
 	}
+
 	buf := bytes.NewReader(data)
-	return binary.Read(buf, binary.BigEndian, pkt)
+
+	fields := []interface{}{
+		&pkt.SequenceNumber,
+		&pkt.Timestamp,
+		&pkt.ErrorEstimation,
+		&pkt.MBZ,
+		&pkt.ReceptionTimestamp,
+		&pkt.SenderSequenceNumber,
+		&pkt.SenderTimestamp,
+		&pkt.SenderErrorEstimation,
+		&pkt.SenderTTL,
+	}
+
+	for _, field := range fields {
+		if err := binary.Read(buf, binary.BigEndian, field); err != nil {
+			return fmt.Errorf("erreur lecture champ: %w", err)
+		}
+	}
+
+	// Lire les 20 octets de padding
+	pkt.Padding = make([]byte, 20)
+	if _, err := buf.Read(pkt.Padding); err != nil {
+		return fmt.Errorf("erreur lecture padding: %w", err)
+	}
+
+	return nil
 }
+
 
 // Envoi d'un paquet UDP
 func SendPacket(packet []byte, addr string, port int) error {
@@ -101,16 +128,12 @@ func SendPacket(packet []byte, addr string, port int) error {
 }
 
 // Réception d'un paquet UDP
-func receivePacket() ([]byte, error) {
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: AppConfig.Network.ListenPort})
 
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
+func receivePacket(conn *net.UDPConn) ([]byte, error) {
+	// Timeout pour éviter blocage infini
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
 	buffer := make([]byte, AppConfig.Network.PacketSize)
-
-	// Lire les données envoyées via UDP
 	n, _, err := conn.ReadFromUDP(buffer)
 	if err != nil {
 		return nil, fmt.Errorf("échec de la réception du paquet UDP: %v", err)
@@ -121,9 +144,9 @@ func receivePacket() ([]byte, error) {
 	return buffer[:n], nil
 }
 
+
 // Démarrage du test QoS
 func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
-
 	params, err := parseTestParameters(testParams)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid test parameters: %v", err)
@@ -137,19 +160,36 @@ func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 	}
 	qos := &QoSMetrics{}
 
+	// Ouvre la socket UDP une fois pour toutes
+	localAddr := &net.UDPAddr{
+		IP:   net.IPv4zero, // écoute sur toutes les interfaces
+		Port: AppConfig.Network.ListenPort,
+	}
+	conn, err := net.ListenUDP("udp", localAddr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("échec ouverture socket UDP: %v", err)
+	}
+	defer conn.Close()
+
+	// Boucle de test
 	testEnd := Stats.StartTime.Add(params.Duration)
 	for time.Now().Before(testEnd) {
-		err := handleSender(Stats, qos)
+		fmt.Println("Tentative d'envoi du paquet...")
+		err := handleSender(Stats, qos, conn) // <- on passe la même conn à chaque fois
 		if err != nil {
+			fmt.Printf("❌ Erreur handleSender: %v\n", err)
 			return nil, nil, fmt.Errorf("erreur lors de l'envoi du paquet: %v", err)
 		}
+		fmt.Println("✅ Paquet envoyé")
 		time.Sleep(params.PacketInterval)
 	}
 
+	// Calcul du taux de perte
 	if Stats.SentPackets > 0 {
 		qos.PacketLossPercent = float64(Stats.SentPackets-Stats.ReceivedPackets) / float64(Stats.SentPackets) * 100
 	}
 
+	// Latence moyenne
 	if len(Stats.LatencySamples) > 0 {
 		var totalLatency int64
 		for _, lat := range Stats.LatencySamples {
@@ -158,6 +198,7 @@ func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 		qos.AvgLatencyMs = totalLatency / int64(len(Stats.LatencySamples)) / 1e6
 	}
 
+	// Jitter moyen
 	if len(Stats.LatencySamples) > 1 {
 		var totalJitter int64
 		for i := 1; i < len(Stats.LatencySamples); i++ {
@@ -169,14 +210,16 @@ func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 		qos.AvgJitterMs = 0
 	}
 
-	if params.Duration.Seconds() > 0 {
-		qos.AvgThroughputKbps = float64(Stats.TotalBytesReceived*8) / params.Duration.Seconds() / 1024
+	// Débit moyen
+	durationSec := params.Duration.Seconds()
+	if durationSec >= 1.0 && Stats.TotalBytesReceived > 0 {
+		qos.AvgThroughputKbps = float64(Stats.TotalBytesReceived*8) / durationSec / 1024
 	}
 
 	SetLatestMetrics(qos)
-
 	return Stats, qos, nil
 }
+
 
 // Struct pour les paramètres parsés
 type TestParams struct {
@@ -189,14 +232,14 @@ type TestParams struct {
 // Extraire  les paramètres
 func parseTestParameters(input string) (*TestParams, error) {
 	params := &TestParams{
-        TargetIP:       AppConfig.DefaultTest.TargetIP,
-        TargetPort:     AppConfig.DefaultTest.TargetPort,
-        Duration:       AppConfig.DefaultTest.Duration,
-        PacketInterval: AppConfig.DefaultTest.Interval,
-    }
+		TargetIP:       AppConfig.DefaultTest.TargetIP,
+		TargetPort:     AppConfig.DefaultTest.TargetPort,
+		Duration:       AppConfig.DefaultTest.Duration,
+		PacketInterval: AppConfig.DefaultTest.Interval,
+	}
 
 	// Exemple de parsing simple (à adapter)
-	parts := strings.Split(input, ",")
+	parts := strings.Split(input, "&")
 	for _, part := range parts {
 		kv := strings.Split(part, "=")
 		if len(kv) != 2 {
@@ -260,8 +303,10 @@ func GetLatestMetrics() *QoSMetrics {
 	return latestMetrics
 }
 
-// Envoi de paquets dans le test TWAMP
-func handleSender(Stats *PacketStats, qos *QoSMetrics) error {
+
+// Envoi + réception d'un paquet TWAMP
+func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error {
+	fmt.Println("handleSender : début")
 
 	twamp_testpaquet := TwampTestPacket{
 		SequenceNumber:        uint32(Stats.SentPackets),
@@ -275,20 +320,23 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics) error {
 		SenderTTL:             255,
 		Padding:               make([]byte, 20),
 	}
-	// envoi paquet twamp-test
+
+	// Sérialisation
 	serializeTwampTestPacket, err := SerializeTwampTestPacket(&twamp_testpaquet)
 	if err != nil {
 		log.Printf("Erreur de sérialisation: %v", err)
 		return fmt.Errorf("erreur de sérialisation du paquet TWAMP: %w", err)
 	}
 
+	// Envoi
 	err = SendPacket(serializeTwampTestPacket, Stats.TargetAddress, Stats.TargetPort)
 	if err != nil {
 		log.Printf("Erreur d'envoi: %v", err)
 		return fmt.Errorf("erreur lors de l'envoi du paquet TWAMP: %w", err)
 	}
-	//recevoir twamp-test reflecté
-	receivedData, err := receivePacket()
+
+	// Réception
+	receivedData, err := receivePacket(conn)
 	if err != nil {
 		log.Printf("Erreur de réception: %v", err)
 		return fmt.Errorf("réception paquet %d échouée: %w", Stats.SentPackets+1, err)
@@ -303,12 +351,11 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics) error {
 
 	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
 
-	// Calcul de la latence
+	// Calculs QoS
 	latency := int64(receivedPacket.ReceptionTimestamp - receivedPacket.SenderTimestamp)
 	Stats.LatencySamples = append(Stats.LatencySamples, latency)
 	Stats.LastLatency = latency
 
-	// Calcul du jitter
 	if len(Stats.LatencySamples) > 1 {
 		prev := Stats.LatencySamples[len(Stats.LatencySamples)-2]
 		jitter := abs(latency - prev)
@@ -322,8 +369,10 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics) error {
 		Stats.SentPackets,
 		latency/1e6,
 		qos.TotalJitter/1e6/int64(len(Stats.LatencySamples)))
+
 	return nil
 }
+
 
 func handleReflector(data []byte) error {
 	var receivedPacket TwampTestPacket
@@ -343,12 +392,13 @@ func handleReflector(data []byte) error {
 
 	return SendPacket(serializedtestPacket, AppConfig.Sender.IP, AppConfig.Sender.Port)
 }
+
 // Fonction qui gère l'écoute sur le port Reflector (UDP)
 func listenAsReflector() {
 	// Adresse du serveur (Reflector)
 	addr := net.UDPAddr{
-		Port: AppConfig.Reflector.Port, 
-		IP:   net.ParseIP(AppConfig.Reflector.IP), 
+		Port: AppConfig.Reflector.Port,
+		IP:   net.ParseIP(AppConfig.Reflector.IP),
 	}
 
 	// Ouverture du socket UDP pour écouter les paquets
@@ -384,7 +434,6 @@ func listenAsReflector() {
 	}
 }
 
-// Ajouter cette définition quelque part dans votre code
 type twampAgent struct {
 	testpb.UnimplementedTestServiceServer
 	mu                sync.Mutex
@@ -532,8 +581,3 @@ func main() {
 	// Blocage principal pour empêcher l'arrêt
 	select {}
 }
-
-
-	
-
-

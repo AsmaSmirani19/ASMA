@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"time"
 
+	"io"
+
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 
@@ -29,6 +31,7 @@ type TestResult struct {
 
 // structure des paquets
 type SendSessionRequestPacket struct {
+	Type          byte
 	SenderAddress [16]byte
 	ReceiverPort  uint16
 	SenderPort    uint16
@@ -47,7 +50,8 @@ type SessionAcceptPacket struct {
 	HMAC           [16]byte
 }
 type StartSessionPacket struct {
-	MBZ  uint8
+	Type   byte
+	MBZ   uint8
 	HMAC [16]byte
 }
 type StartAckPacket struct {
@@ -56,17 +60,34 @@ type StartAckPacket struct {
 	HMAC   [16]byte
 }
 type StopSessionPacket struct {
+	Type             byte
 	Accept           uint8
 	MBZ              uint8
 	NumberOfSessions uint8
 	HMAC             [16]byte
 }
 
+const (
+	PacketTypeSessionRequest = 0x01
+	PacketTypeSessionAccept  = 0x02
+	PacketTypeStartSession   = 0x03 
+	PacketTypeStartAck       = 0x04
+	PacketTypeStopSession    = 0x05
+)
+
+
 // Sérialisation des paquets
 func SerializePacket(packet *SendSessionRequestPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
-	err := binary.Write(buf, binary.BigEndian, packet.SenderAddress)
+	// 1. Écrire le champ Type comme premier octet
+	err := binary.Write(buf, binary.BigEndian, packet.Type)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Puis le reste du paquet
+	err = binary.Write(buf, binary.BigEndian, packet.SenderAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +136,7 @@ func SerializeStartPacket(packet *StartSessionPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	fields := []interface{}{
+		packet.Type, 
 		packet.MBZ,
 		packet.HMAC,
 	}
@@ -126,6 +148,7 @@ func SerializeStartPacket(packet *StartSessionPacket) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
 
 // Sérialisation start-ack
 func SerializeStartACKtPacket(packet *StartAckPacket) ([]byte, error) {
@@ -148,6 +171,7 @@ func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	fields := []interface{}{
+		packet.Type,
 		packet.MBZ,
 		packet.HMAC,
 		packet.NumberOfSessions,
@@ -177,41 +201,25 @@ func SendTCPPacket(packet []byte, addr string, port int) error {
 	return nil
 }
 
-// receivePacket_ reçoit un paquet via TCP
-func receiveTCPPacket() ([]byte, error) {
-	listener, err := net.Listen("tcp", AppConfig.Server.TCPListener.Address)
-	if err != nil {
-		return nil, fmt.Errorf("erreur de création du listener: %v", err)
-	}
-	defer listener.Close()
-	conn, err := listener.Accept()
-	if err != nil {
-		return nil, fmt.Errorf("erreur lors de l'acceptation de la connexion: %v", err)
-	}
-	defer conn.Close()
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-	buffer := make([]byte, 1500)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		// Si la lecture échoue, vérifier si c'est un timeout
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return nil, fmt.Errorf("timeout lors de la lecture du paquet")
-		}
-		return nil, fmt.Errorf("erreur de lecture du paquet: %v", err)
-	}
-	return buffer[:n], nil
-}
-
 func identifyPacketType(data []byte) string {
-	if len(data) == 45 {
-		return "SessionRequest"
-	} else if len(data) == 17 {
-		return "StartSession"
-	} else if len(data) == 19 {
-		return "StopSession"
+	if len(data) < 1 {
+		return "Unknown"
 	}
-	return "Unknown"
+
+	switch data[0] {
+	case PacketTypeSessionRequest:
+		return "SessionRequest"
+	case PacketTypeSessionAccept:
+		return "SessionAccept"
+	case PacketTypeStartSession:
+		return "StartSession"
+	case PacketTypeStartAck:
+		return "StartAck"
+	case PacketTypeStopSession:
+		return "StopSession"
+	default:
+		return "Unknown"
+	}
 }
 
 func client() {
@@ -224,153 +232,173 @@ func client() {
 		timeout       = AppConfig.Network.Timeout
 	)
 
-	// 1. Envoyer le paquet Session Request
+	// 🔁 Connexion TCP unique au serveur
+	conn, err := net.Dial("tcp", fmt.Sprintf("[%s]:%d", serverAddress, serverPort))
+	if err != nil {
+		log.Fatalf("Erreur de connexion au serveur TCP : %v", err)
+	}
+	defer conn.Close()
+
+	// 1. Envoyer Session-Request
 	packet := SendSessionRequestPacket{
+		Type:          PacketTypeSessionRequest,
 		SenderAddress: func() [16]byte {
 			var ip [16]byte
 			copy(ip[:], net.ParseIP("127.0.0.1").To16())
 			return ip
 		}(),
 		ReceiverPort:  uint16(receiverPort),
-		SenderPort:    uint16(senderPort), 
+		SenderPort:    uint16(senderPort),
 		PaddingLength: 0,
 		StartTime:     uint32(time.Now().Unix()),
 		Timeout:       uint32(timeout),
-		TypeP:         0x00,
+		TypeP:         0x05,
 	}
-
-	fmt.Println("Envoi du paquet Session Request...")
+	log.Println("Envoi Session-Request...")
 	serializedPacket, err := SerializePacket(&packet)
 	if err != nil {
-		log.Fatalf("Erreur de sérialisation du paquet Session-Request : %v", err)
+		log.Fatalf("Erreur de sérialisation : %v", err)
 	}
-	if err := SendTCPPacket(serializedPacket, serverAddress, serverPort); err != nil {
-		log.Fatalf("Erreur envoi Session-Request : %v", err)
-	}
-
-	// 2. Réception du paquet Accept-session
-	receivedData, err := receiveTCPPacket()
+	_, err = conn.Write(serializedPacket)
 	if err != nil {
-		log.Fatalf("Erreur lors de la réception d'Accept-session : %v", err)
+		log.Fatalf("Erreur d'envoi du Session-Request : %v", err)
 	}
-	fmt.Printf("Données reçues (Accept-session) : %x\n", receivedData)
 
-	// 3. Envoyer le paquet Start-Session
+	// 2. Lire Accept-Session
+	buffer := make([]byte, 1024)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		log.Fatalf("Erreur de lecture (Accept-Session) : %v", err)
+	}
+	log.Printf("Données reçues (Accept-session) : %x", buffer[:n])
+
+	// 3. Envoyer Start-Session
 	startSessionPacket := StartSessionPacket{
+		Type: PacketTypeStartSession,
 		MBZ:  0,
 		HMAC: [16]byte{},
 	}
-	fmt.Println("Envoi du paquet Start Session...")
-	serializedStartSessionPacket, err := SerializeStartPacket(&startSessionPacket)
+	log.Println("Envoi Start-Session...")
+	serializedStart, err := SerializeStartPacket(&startSessionPacket)
 	if err != nil {
-		log.Fatalf("Erreur de sérialisation du paquet Start Session : %v", err)
+		log.Fatalf("Erreur de sérialisation Start-Session : %v", err)
 	}
-	if err = SendTCPPacket(serializedStartSessionPacket, serverAddress, serverPort); err != nil {
-		log.Fatalf("Erreur lors de l'envoi du paquet Start Session : %v", err)
-	}
-
-	// 4. Réception du paquet Start-ACK et validation
-	receivedData, err = receiveTCPPacket()
+	_, err = conn.Write(serializedStart)
 	if err != nil {
-		log.Fatalf("Erreur lors de la réception Start-ACK : %v", err)
+		log.Fatalf("Erreur d'envoi Start-Session : %v", err)
 	}
 
-	log.Println("✅ Start-ACK reçu. Déclenchement du test via Kafka...")
-
-	// Envoi d'une commande de test à l'agent via Kafka
+	// 4. Lire Start-Ack
+	n, err = conn.Read(buffer)
+	if err != nil {
+		log.Fatalf("Erreur de lecture (Start-Ack) : %v", err)
+	}
+	log.Println("✅ Start-Ack reçu. Déclenchement test via Kafka...")
 	SendTestRequestToKafka("START-TEST")
 
-	// 8. Préparer le paquet Stop Session
+	// 5. Envoyer Stop-Session
 	stopSessionPacket := StopSessionPacket{
+		Type:             PacketTypeStopSession,
 		Accept:           0,
 		MBZ:              0,
 		NumberOfSessions: 1,
 		HMAC:             [16]byte{},
 	}
-	fmt.Println("Envoi du paquet Stop Session...")
-	serializedStopSessionPacket, err := SerializeStopSession(&stopSessionPacket)
+	log.Println("Envoi Stop-Session...")
+	serializedStop, err := SerializeStopSession(&stopSessionPacket)
 	if err != nil {
-		log.Fatalf("Erreur de sérialisation du Stop-Ack : %v", err)
+		log.Fatalf("Erreur de sérialisation Stop-Session : %v", err)
 	}
-	if err = SendTCPPacket(serializedStopSessionPacket, serverAddress, serverPort); err != nil {
-		log.Fatalf("Erreur lors de l'envoi du Stop Session : %v", err)
+	_, err = conn.Write(serializedStop)
+	if err != nil {
+		log.Fatalf("Erreur d'envoi Stop-Session : %v", err)
 	}
 }
 
 func Serveur() {
-	// Démarrer un serveur TCP sur le port 5001
+	// Démarrer un serveur TCP sur le port configuré
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", AppConfig.Network.ServerPort))
-if err != nil {
-    log.Fatalf("Erreur de serveur TCP : %v", err)
-}
+	if err != nil {
+		log.Fatalf("Erreur de serveur TCP : %v", err)
+	}
 	defer listener.Close()
 
-	log.Println("Serveur en attente de connexions sur le port 61000...")
+	log.Printf("Serveur en attente de connexions sur le port %d...\n", AppConfig.Network.ServerPort)
 
 	for {
-		// Accepter une nouvelle connexion
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Printf("Erreur d'acceptation de la connexion : %v", err)
 			continue
 		}
+
 		// Gérer la connexion dans une nouvelle goroutine
 		go func(conn net.Conn) {
 			defer conn.Close()
 
 			buf := make([]byte, 1024)
-			n, err := conn.Read(buf)
-			if err != nil {
-				log.Printf("Erreur de lecture de la connexion : %v", err)
-				return
-			}
-			data := buf[:n]
-			packetType := identifyPacketType(data)
 
-			switch packetType {
-			case "SessionRequest":
-				log.Println("Paquet Request-Session reçu.")
-				acceptSessionPacket := SessionAcceptPacket{
-					Accept: 0,
-					MBZ:    0,
-					HMAC:   [16]byte{},
-				}
-				serializedPacket, err := SerializeAcceptPacket(&acceptSessionPacket)
+			for {
+				n, err := conn.Read(buf)
 				if err != nil {
-					log.Printf("Erreur de sérialisation du paquet Accept-Session : %v", err)
+					if err == io.EOF {
+						log.Println("Connexion fermée par le client.")
+					} else {
+						log.Printf("Erreur de lecture de la connexion : %v", err)
+					}
 					return
 				}
-				_, err = conn.Write(serializedPacket)
-				if err != nil {
-					log.Printf("Erreur d'envoi du paquet Accept-Session : %v", err)
-					return
-				}
-				log.Println("Paquet Accept-Session envoyé.")
 
-			case "StartSession":
-				log.Println("Paquet Start-Session reçu.")
-				startAckPacket := StartAckPacket{
-					Accept: 0,
-					MBZ:    0,
-					HMAC:   [16]byte{},
-				}
-				serializedStartAckPacket, err := SerializeStartACKtPacket(&startAckPacket)
-				if err != nil {
-					log.Printf("Erreur de sérialisation du paquet Start-Ack : %v", err)
-					return
-				}
-				_, err = conn.Write(serializedStartAckPacket)
-				if err != nil {
-					log.Printf("Erreur d'envoi du paquet Start-Ack : %v", err)
-					return
-				}
-				log.Println("Paquet Start-Ack envoyé.")
+				data := buf[:n]
+				packetType := identifyPacketType(data)
 
-			case "StopSession":
-				log.Println("Paquet Stop-Session reçu.")
+				switch packetType {
+				case "SessionRequest":
+					log.Println("Paquet SessionRequest reçu.")
+					acceptSessionPacket := SessionAcceptPacket{
+						Accept: 0,
+						MBZ:    0,
+						HMAC:   [16]byte{},
+					}
+					serializedPacket, err := SerializeAcceptPacket(&acceptSessionPacket)
+					if err != nil {
+						log.Printf("Erreur de sérialisation du paquet Accept-Session : %v", err)
+						return
+					}
+					_, err = conn.Write(serializedPacket)
+					if err != nil {
+						log.Printf("Erreur d'envoi du paquet Accept-Session : %v", err)
+						return
+					}
+					log.Println("Paquet Accept-Session envoyé.")
 
-			default:
-				log.Println("Paquet inconnu reçu.")
+				case "StartSession":
+					log.Println("Paquet StartSession reçu.")
+					startAckPacket := StartAckPacket{
+						Accept: 0,
+						MBZ:    0,
+						HMAC:   [16]byte{},
+					}
+					serializedStartAckPacket, err := SerializeStartACKtPacket(&startAckPacket)
+					if err != nil {
+						log.Printf("Erreur de sérialisation du paquet Start-Ack : %v", err)
+						return
+					}
+					_, err = conn.Write(serializedStartAckPacket)
+					if err != nil {
+						log.Printf("Erreur d'envoi du paquet Start-Ack : %v", err)
+						return
+					}
+					log.Println("Paquet Start-Ack envoyé.")
+
+				case "StopSession":
+					log.Println("Paquet StopSession reçu.")
+					log.Println("Session terminée.")
+					return // Fermer la session proprement
+
+				default:
+					log.Println("Paquet inconnu reçu.")
+				}
 			}
 		}(conn)
 	}
@@ -390,12 +418,11 @@ func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTes
 	testCmd := &testpb.QuickTestMessage{
 		Message: &testpb.QuickTestMessage_Request{
 			Request: &testpb.QuickTestRequest{
-				TestId:    "test_001",
+				TestId:     "test_001",
 				Parameters: AppConfig.QuickTest.Parameters, // ← ici avec ":"
 			},
 		},
 	}
-
 
 	if err := stream.Send(testCmd); err != nil {
 		log.Printf("Erreur d'envoi de la commande: %v", err)
@@ -465,58 +492,53 @@ func startGRPCServer() {
 
 }
 
-	func main() {
+func main() {
+	LoadConfig("config_server.yaml")
 
-		LoadConfig("config_server.yaml")
+	// 1. 📡 Lancement du serveur WebSocket sur un port séparé
+	go StartWebSocketServer()
 
-		// 5. 📡 Lancement du serveur WebSocket sur un port séparé
-		go StartWebSocketServer()  
-
-		// 1. 🔌 Connexion à la base de données
-		db, err := connectToDB()
-		if err != nil {
-			log.Fatalf("Erreur de connexion DB : %v", err)
-		}
-		defer db.Close()
-	
-		// 2. 🌐 Définition des routes REST HTTP
-		http.HandleFunc("/api/test/start", startTest)
-		http.HandleFunc("/api/test/results", getTestResults)
-		http.HandleFunc("/api/agents", handleAgents(db))
-		http.HandleFunc("/api/agent-group", handleAgentGroup(db))
-		http.HandleFunc("/api/test-profile", handleTestProfile(db))
-		http.HandleFunc("/api/threshold", handleThreshold(db))
-		http.HandleFunc("/api/tests", handleTests(db))
-	
-		
-	
-		// 3.  🌍 Configuration CORS
-		c := cors.New(cors.Options{
-			AllowedOrigins: []string{"http://localhost:4200"},
-			AllowedMethods: []string{"GET", "POST", "DELETE", "PUT"},
-			AllowedHeaders: []string{"Content-Type", "Authorization"},
-		})
-		handler := c.Handler(http.DefaultServeMux)
-	
-		// 4. 🚀  Lancement du serveur HTTP (REST API)
-		go func() {
-			fmt.Println("🌐 Serveur HTTP lancé sur http://localhost:5000")
-			log.Fatal(http.ListenAndServe(":5000", handler))
-		}()
-	
-		
-	
-		// 6. 🚀 Lancement du serveur gRPC
-		go startGRPCServer()
-	
-		// 7. Ecoute et traitement des résultats de test
-		go listenToTestResultsAndStore(db)
-	
-		// 8.  🔄 Démarrage de composants spécifiques (testeurs, etc.)
-		go Serveur()
-		go client()
-	
-		// 9.  🛑Empêche le programme de se terminer
-		select {}
+	// 2. 🔌 Connexion à la base de données
+	db, err := connectToDB()
+	if err != nil {
+		log.Fatalf("Erreur de connexion DB : %v", err)
 	}
-	
+	defer db.Close()
+
+	// 3. 🌐 Définition des routes REST HTTP
+	http.HandleFunc("/api/test/start", startTest)
+	http.HandleFunc("/api/test/results", getTestResults)
+	http.HandleFunc("/api/agents", handleAgents(db))
+	http.HandleFunc("/api/agent-group", handleAgentGroup(db))
+	http.HandleFunc("/api/test-profile", handleTestProfile(db))
+	http.HandleFunc("/api/threshold", handleThreshold(db))
+	http.HandleFunc("/api/tests", handleTests(db))
+
+	// 4. 🌍 Configuration CORS
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"http://localhost:4200"},
+		AllowedMethods: []string{"GET", "POST", "DELETE", "PUT"},
+		AllowedHeaders: []string{"Content-Type", "Authorization"},
+	})
+	handler := c.Handler(http.DefaultServeMux)
+
+	// 5. 🚀 Lancement du serveur HTTP (REST API)
+	go func() {
+		fmt.Println("🌐 Serveur HTTP lancé sur http://localhost:5000")
+		log.Fatal(http.ListenAndServe(":5000", handler))
+	}()
+
+	// 6. 🚀 Lancement du serveur gRPC
+	go startGRPCServer()
+
+	// 7. 🎧 Écoute des résultats de test
+	go listenToTestResultsAndStore(db)
+
+	// 8. 🔄 Démarrage de composants spécifiques (testeurs, etc.)
+	go Serveur()                // Lancement du listener d’abord
+	time.Sleep(1 * time.Second) // Attente pour s’assurer que le port est bien en écoute
+	go client()                 // Ensuite envoyer le paquet vers 61000
+
+	// 9. 🛑 Empêche le programme de se terminer
+	select {}
+}
