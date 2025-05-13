@@ -32,11 +32,11 @@ type PacketStats struct {
 }
 
 type QoSMetrics struct {
-	PacketLossPercent float64
-	AvgLatencyMs      int64
-	AvgJitterMs       int64
-	AvgThroughputKbps float64
-	TotalJitter       int64
+	PacketLossPercent  float64
+	AvgLatencyMs       float64  
+	AvgJitterMs        float64 
+	AvgThroughputKbps  float64
+	TotalJitter        int64
 }
 
 type TwampTestPacket struct {
@@ -195,7 +195,7 @@ func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 		for _, lat := range Stats.LatencySamples {
 			totalLatency += lat
 		}
-		qos.AvgLatencyMs = totalLatency / int64(len(Stats.LatencySamples)) / 1e6
+		qos.AvgLatencyMs = float64(totalLatency) / float64(len(Stats.LatencySamples)) / 1e6
 	}
 
 	// Jitter moyen
@@ -205,7 +205,7 @@ func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 			totalJitter += abs(Stats.LatencySamples[i] - Stats.LatencySamples[i-1])
 		}
 		qos.TotalJitter = totalJitter
-		qos.AvgJitterMs = qos.TotalJitter / int64(len(Stats.LatencySamples)-1) / 1e6
+		qos.AvgJitterMs = float64(qos.TotalJitter) / float64(len(Stats.LatencySamples)-1) / 1e6
 	} else {
 		qos.AvgJitterMs = 0
 	}
@@ -334,6 +334,8 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		log.Printf("Erreur d'envoi: %v", err)
 		return fmt.Errorf("erreur lors de l'envoi du paquet TWAMP: %w", err)
 	}
+	Stats.SentPackets++ // <- déplacé ici
+
 
 	// Réception
 	receivedData, err := receivePacket(conn)
@@ -361,9 +363,8 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		jitter := abs(latency - prev)
 		qos.TotalJitter += jitter
 	}
-
 	Stats.ReceivedPackets++
-	Stats.SentPackets++
+	
 
 	fmt.Printf("[Paquet %d] Latence: %d ms | Jitter: %d ms\n",
 		Stats.SentPackets,

@@ -10,13 +10,13 @@ import (
 
 // Structure des résultats de test à envoyer au backend
 type TestResult struct {
-	AgentID           string  `json:"agent_id"`
-	Target            string  `json:"target"`
-	Port              int     `json:"port"`
-	PacketLossPercent float64 `json:"packet_loss_percent"`
-	AvgLatencyMs      int64   `json:"avg_latency_ms"`
-	AvgJitterMs       int64   `json:"avg_jitter_ms"`
-	AvgThroughputKbps float64 `json:"avg_throughput_Kbps"`
+	AgentID            string   `json:"agent_id"`
+	Target             string   `json:"target"`
+	Port               int      `json:"port"`
+	PacketLossPercent  float64  `json:"packet_loss_percent"`
+	AvgLatencyMs       float64  `json:"avg_latency_ms"`
+	AvgJitterMs        float64  `json:"avg_jitter_ms"`
+	AvgThroughputKbps  float64  `json:"avg_throughput_Kbps"`
 }
 
 // Fonction qui écoute les demandes de test depuis Kafka
