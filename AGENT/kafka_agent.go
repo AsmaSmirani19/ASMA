@@ -68,8 +68,8 @@ func runTestAndSendResult() {
 
 	log.Println("Test terminé.")
 	log.Printf("Envoyés: %d | Reçus: %d", stats.SentPackets, stats.ReceivedPackets)
-	log.Printf("Latence moyenne: %d ms", qos.AvgLatencyMs)
-	log.Printf("Jitter moyen: %d ms", qos.AvgJitterMs)
+	log.Printf("Latence moyenne: %f ms", qos.AvgLatencyMs)
+	log.Printf("Jitter moyen: %f ms", qos.AvgJitterMs)
 
 	// Construction de l'objet de résultat
 	result := TestResult{

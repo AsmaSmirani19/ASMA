@@ -213,7 +213,7 @@ func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 	// Débit moyen
 	durationSec := params.Duration.Seconds()
 	if durationSec >= 1.0 && Stats.TotalBytesReceived > 0 {
-		qos.AvgThroughputKbps = float64(Stats.TotalBytesReceived*8) / durationSec / 1024
+		qos.AvgThroughputKbps = float64(Stats.TotalBytesReceived*8) / durationSec / 1000
 	}
 
 	SetLatestMetrics(qos)
@@ -344,6 +344,8 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		return fmt.Errorf("réception paquet %d échouée: %w", Stats.SentPackets+1, err)
 	}
 
+	Stats.TotalBytesReceived += int64(len(receivedData))
+
 	var receivedPacket TwampTestPacket
 	err = deserializeTwampTestPacket(receivedData, &receivedPacket)
 	if err != nil {
@@ -366,10 +368,12 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 	Stats.ReceivedPackets++
 	
 
-	fmt.Printf("[Paquet %d] Latence: %d ms | Jitter: %d ms\n",
-		Stats.SentPackets,
-		latency/1e6,
-		qos.TotalJitter/1e6/int64(len(Stats.LatencySamples)))
+	avgJitter := float64(qos.TotalJitter) / float64(len(Stats.LatencySamples)) / 1e6
+	fmt.Printf("[Paquet %d] Latence: %.3f ms | Jitter moyen actuel: %.3f ms\n",
+    Stats.SentPackets,
+    float64(latency)/1e6,
+    avgJitter)
+
 
 	return nil
 }
