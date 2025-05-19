@@ -3,16 +3,24 @@ package main
 
 import (
 	"time"
+
+	"github.com/lib/pq"
 )
 
 
 // Déclaration du type Agent
 type Agent struct {
-	ID           int    `json:"id"`
-	Name         string `json:"name"`
-	Address      string `json:"address"`
-	TestHealth   bool   `json:"test_health"`
-	Availability int    `json:"availability"`
+	ID           int                 `json:"id" db:"id"`
+	Name         string              `json:"name" db:"Name"`
+	Address      string              `json:"address" db:"Address"`
+	TestHealth   bool                `json:"testhealth" db:"Test_health"`
+}
+
+type AgentHealthCheck struct {
+    ID        int       `db:"id"`         // ou uint selon ta config
+    AgentID   int       `db:"agent_id"`
+    Timestamp time.Time `db:"timestamp"`
+    Status    string    `db:"status"`
 }
 
 // Déclaration du type QoSMetrics
@@ -41,12 +49,23 @@ type plannedtest struct {
 	Completed    bool          `json:"completed"`	
 }	
 
-
 type agentGroup struct {
-	ID             int       `json:"id"`
-	GroupName     string    `json:"group_name"`
-	NumberOfAgents  int       `json:"number_of_agents"`
-	CreationDate   time.Time `json:"creation_date"` 
+	ID             int               `json:"id"`
+	GroupName     string             `json:"group_name"`
+	NumberOfAgents  int             `json:"number_of_agents"`
+	CreationDate   time.Time         `json:"creation_date"` 
+	AgentIDs       pq.Int64Array     `json:"agent_ids"`
+}
+
+type CreateGroupPayload struct {
+	GroupName    string   `json:"group_name"`
+	CreationDate string   `json:"creation_date"`
+	AgentIDs     []int    `json:"agent_ids"`
+}
+
+type AgentLinkPayload struct {
+	GroupID  int   `json:"group_id"`
+	AgentIDs []int `json:"agent_ids"`
 }
 
 type testProfile struct {
@@ -74,6 +93,19 @@ type Threshold struct {
 	ActiveThresholds  []string `json:"active_thresholds"`
 	DisabledThresholds []string `json:"disabled_thresholds"`
 }
+
+type TestConfig struct {
+	ID             int    `json:"test_id"`
+	Name           string `json:"name"`
+	Duration       string `json:"duration"`
+	NumberOfAgents int    `json:"number_of_agents"`
+	SourceID       int    `json:"source_id"`
+	TargetID       int    `json:"target_id"`
+	ProfileID      int    `json:"profile_id"`
+	ThresholdID    int    `json:"threshold_id"`
+}
+
+
 
 
 

@@ -5,8 +5,15 @@ import (
 	"encoding/json"
 	"log"
 	"fmt"
+
+	"database/sql"   
 	"github.com/segmentio/kafka-go"
 )
+
+type TestConfig struct {
+	TestID int `json:"test_id"`
+}
+
 
 // Structure des résultats de test à envoyer au backend
 type TestResult struct {
@@ -20,7 +27,7 @@ type TestResult struct {
 }
 
 // Fonction qui écoute les demandes de test depuis Kafka
-func listenToTestRequestsFromKafka() {
+func listenToTestRequestsFromKafka(db *sql.DB) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: AppConfig.Kafka.Brokers,
 		Topic:   AppConfig.Kafka.TestRequestTopic,
@@ -35,15 +42,21 @@ func listenToTestRequestsFromKafka() {
 			continue
 		}
 
-		log.Printf("Message reçu : %s", message.Value)
+		log.Printf("Message reçu de Kafka (test request) : %s", message.Value)
 
-		if string(message.Value) == "START-TEST" {
-			runTestAndSendResult()
-		} else {
-			log.Printf("Commande non reconnue : %s", message.Value)
+		var testConfig TestConfig
+		err = json.Unmarshal(message.Value, &testConfig)
+		if err != nil {
+			log.Printf("Erreur de désérialisation JSON : %v", err)
+			continue
 		}
+
+		log.Printf("Déclenchement du test avec TestID: %d", testConfig.TestID)
+		//go client(testConfig)
 	}
 }
+
+
 
 // Fonction pour exécuter un test et envoyer le résultat via Kafka
 func runTestAndSendResult() {

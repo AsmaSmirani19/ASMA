@@ -128,7 +128,6 @@ func SendPacket(packet []byte, addr string, port int) error {
 }
 
 // Réception d'un paquet UDP
-
 func receivePacket(conn *net.UDPConn) ([]byte, error) {
 	// Timeout pour éviter blocage infini
 	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -206,6 +205,7 @@ func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 		}
 		qos.TotalJitter = totalJitter
 		qos.AvgJitterMs = float64(qos.TotalJitter) / float64(len(Stats.LatencySamples)-1) / 1e6
+		
 	} else {
 		qos.AvgJitterMs = 0
 	}
@@ -303,7 +303,6 @@ func GetLatestMetrics() *QoSMetrics {
 	return latestMetrics
 }
 
-
 // Envoi + réception d'un paquet TWAMP
 func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error {
 	fmt.Println("handleSender : début")
@@ -334,7 +333,7 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		log.Printf("Erreur d'envoi: %v", err)
 		return fmt.Errorf("erreur lors de l'envoi du paquet TWAMP: %w", err)
 	}
-	Stats.SentPackets++ // <- déplacé ici
+	Stats.SentPackets++ 
 
 
 	// Réception
@@ -353,8 +352,7 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		return fmt.Errorf("erreur de désérialisation du paquet reçu: %w", err)
 	}
 
-	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
-
+		receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
 	// Calculs QoS
 	latency := int64(receivedPacket.ReceptionTimestamp - receivedPacket.SenderTimestamp)
 	Stats.LatencySamples = append(Stats.LatencySamples, latency)
@@ -365,19 +363,23 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		jitter := abs(latency - prev)
 		qos.TotalJitter += jitter
 	}
+
 	Stats.ReceivedPackets++
-	
 
-	avgJitter := float64(qos.TotalJitter) / float64(len(Stats.LatencySamples)) / 1e6
+	var avgJitter float64
+	if len(Stats.LatencySamples) > 1 {
+		avgJitter = float64(qos.TotalJitter) / float64(len(Stats.LatencySamples)-1) / 1e6
+	} else {
+		avgJitter = 0
+	}
+
 	fmt.Printf("[Paquet %d] Latence: %.3f ms | Jitter moyen actuel: %.3f ms\n",
-    Stats.SentPackets,
-    float64(latency)/1e6,
-    avgJitter)
-
+		Stats.SentPackets,
+		float64(latency)/1e6,
+		avgJitter)
 
 	return nil
 }
-
 
 func handleReflector(data []byte) error {
 	var receivedPacket TwampTestPacket
@@ -560,16 +562,23 @@ func startClientStream() {
 	}
 }
 
+// =>=>=>=> test_health<=<=<= //
+
+
+
 func main() {
 	log.Println("Démarrage de l'agent TWAMP...")
 
 	LoadConfig("config.yaml")
+
 
 	// Mode Reflector TWAMP
 	go listenAsReflector()
 
 	// Serveur gRPC pour Quick Tests
 	go startGRPCServer()
+
+
 
 	// Attente du démarrage des services
 	time.Sleep(2 * time.Second)
@@ -581,7 +590,7 @@ func main() {
 	go startClientStream()
 
 	// Kafka
-	go listenToTestRequestsFromKafka()
+	//go listenToTestRequestsFromKafka()
 
 	// Blocage principal pour empêcher l'arrêt
 	select {}

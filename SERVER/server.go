@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"time"
-
 	"io"
 
 	"github.com/segmentio/kafka-go"
@@ -50,8 +49,8 @@ type SessionAcceptPacket struct {
 	HMAC           [16]byte
 }
 type StartSessionPacket struct {
-	Type   byte
-	MBZ   uint8
+	Type byte
+	MBZ  uint8
 	HMAC [16]byte
 }
 type StartAckPacket struct {
@@ -70,11 +69,10 @@ type StopSessionPacket struct {
 const (
 	PacketTypeSessionRequest = 0x01
 	PacketTypeSessionAccept  = 0x02
-	PacketTypeStartSession   = 0x03 
+	PacketTypeStartSession   = 0x03
 	PacketTypeStartAck       = 0x04
 	PacketTypeStopSession    = 0x05
 )
-
 
 // Sérialisation des paquets
 func SerializePacket(packet *SendSessionRequestPacket) ([]byte, error) {
@@ -109,7 +107,6 @@ func SerializePacket(packet *SendSessionRequestPacket) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// sérialition accept session
 func SerializeAcceptPacket(packet *SessionAcceptPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
@@ -131,12 +128,11 @@ func SerializeAcceptPacket(packet *SessionAcceptPacket) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// sérialition start session
 func SerializeStartPacket(packet *StartSessionPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	fields := []interface{}{
-		packet.Type, 
+		packet.Type,
 		packet.MBZ,
 		packet.HMAC,
 	}
@@ -149,8 +145,6 @@ func SerializeStartPacket(packet *StartSessionPacket) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-
-// Sérialisation start-ack
 func SerializeStartACKtPacket(packet *StartAckPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
@@ -222,8 +216,7 @@ func identifyPacketType(data []byte) string {
 	}
 }
 
-func client() {
-
+func client(testConfig TestConfig) {
 	var (
 		serverAddress = AppConfig.Network.ServerAddress
 		serverPort    = AppConfig.Network.ServerPort
@@ -232,7 +225,6 @@ func client() {
 		timeout       = AppConfig.Network.Timeout
 	)
 
-	// 🔁 Connexion TCP unique au serveur
 	conn, err := net.Dial("tcp", fmt.Sprintf("[%s]:%d", serverAddress, serverPort))
 	if err != nil {
 		log.Fatalf("Erreur de connexion au serveur TCP : %v", err)
@@ -241,7 +233,7 @@ func client() {
 
 	// 1. Envoyer Session-Request
 	packet := SendSessionRequestPacket{
-		Type:          PacketTypeSessionRequest,
+		Type: PacketTypeSessionRequest,
 		SenderAddress: func() [16]byte {
 			var ip [16]byte
 			copy(ip[:], net.ParseIP("127.0.0.1").To16())
@@ -254,6 +246,7 @@ func client() {
 		Timeout:       uint32(timeout),
 		TypeP:         0x05,
 	}
+
 	log.Println("Envoi Session-Request...")
 	serializedPacket, err := SerializePacket(&packet)
 	if err != nil {
@@ -293,8 +286,9 @@ func client() {
 	if err != nil {
 		log.Fatalf("Erreur de lecture (Start-Ack) : %v", err)
 	}
-	log.Println("✅ Start-Ack reçu. Déclenchement test via Kafka...")
-	SendTestRequestToKafka("START-TEST")
+	log.Println("✅ Start-Ack reçu.")
+
+	// 👉 Ici tu peux lancer les paquets TWAMP UDP, etc., selon testConfig.
 
 	// 5. Envoyer Stop-Session
 	stopSessionPacket := StopSessionPacket{
@@ -403,12 +397,10 @@ func Serveur() {
 		}(conn)
 	}
 }
-
+//TestServiceServer
 type quickTestServer struct {
 	testpb.UnimplementedTestServiceServer
 }
-
-//TestServiceServer
 
 // Fonction qui lance un Quick Test
 func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
@@ -474,47 +466,68 @@ func listenToTestResultsAndStore(db *sql.DB) {
 		}
 	}
 }
+// Implémentation du service Health côté serveur
+type healthServer struct {
+	testpb.UnimplementedHealthServer
+}
+
+// Méthode HealthCheck appelée par l'agent
+func (s *healthServer) HealthCheck(ctx context.Context, req *testpb.HealthCheckRequest) (*testpb.HealthCheckResponse, error) {
+	log.Println("Reçu une requête HealthCheck de l'agent")
+	return &testpb.HealthCheckResponse{Status: "OK"}, nil
+}
 
 // startGRPCServer démarre le serveur gRPC.
 func startGRPCServer() {
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", AppConfig.GRPC.Port))
 	if err != nil {
-		log.Fatalf("Échec de l'écoute sur le port 50051 : %v", err)
+		log.Fatalf("Échec de l'écoute sur le port %d : %v", AppConfig.GRPC.Port, err)
 	}
 
 	grpcServer := grpc.NewServer()
+
+	// 1️⃣ Enregistrement du service QuickTest
 	testpb.RegisterTestServiceServer(grpcServer, &quickTestServer{})
 
-	log.Println("Serveur gRPC lancé sur le port 50051...")
+	// 2️⃣ Enregistrement du service HealthCheck
+	testpb.RegisterHealthServer(grpcServer, &healthServer{}) // <-- C'est ça qui manquait
+
+	log.Printf("✅ Serveur gRPC lancé sur le port %d...\n", AppConfig.GRPC.Port)
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Fatalf("Erreur lors du lancement du serveur gRPC : %v", err)
 	}
-
 }
 
 func main() {
+	// 🔧 1. Chargement de la configuration
 	LoadConfig("config_server.yaml")
 
-	// 1. 📡 Lancement du serveur WebSocket sur un port séparé
+	// 📡 2. Lancement du serveur WebSocket en arrière-plan
 	go StartWebSocketServer()
 
-	// 2. 🔌 Connexion à la base de données
+	// 🔌 3. Connexion à la base de données
 	db, err := connectToDB()
 	if err != nil {
 		log.Fatalf("Erreur de connexion DB : %v", err)
 	}
 	defer db.Close()
 
-	// 3. 🌐 Définition des routes REST HTTP
-	http.HandleFunc("/api/test/start", startTest)
+
+
+	// 🌐 5. Définition des routes HTTP
 	http.HandleFunc("/api/test/results", getTestResults)
 	http.HandleFunc("/api/agents", handleAgents(db))
 	http.HandleFunc("/api/agent-group", handleAgentGroup(db))
+	http.HandleFunc("/api/agent_link", handleAgentLink(db))
 	http.HandleFunc("/api/test-profile", handleTestProfile(db))
 	http.HandleFunc("/api/threshold", handleThreshold(db))
 	http.HandleFunc("/api/tests", handleTests(db))
+	http.HandleFunc("/api/trigger-test", triggerTestHandler(db))
 
-	// 4. 🌍 Configuration CORS
+	//http.HandleFunc("/ws/health", healthWebSocketHandler)
+	
+
+	// 🌍 7. Middleware CORS
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"http://localhost:4200"},
 		AllowedMethods: []string{"GET", "POST", "DELETE", "PUT"},
@@ -522,23 +535,28 @@ func main() {
 	})
 	handler := c.Handler(http.DefaultServeMux)
 
-	// 5. 🚀 Lancement du serveur HTTP (REST API)
+	// 🚀 8. Lancement du serveur HTTP
 	go func() {
 		fmt.Println("🌐 Serveur HTTP lancé sur http://localhost:5000")
 		log.Fatal(http.ListenAndServe(":5000", handler))
 	}()
 
-	// 6. 🚀 Lancement du serveur gRPC
+	// 🚀 9. Lancement du serveur gRPC
 	go startGRPCServer()
 
-	// 7. 🎧 Écoute des résultats de test
+	// Création du service
+	agentService := &AgentService{db: db}
+
+	// Appel de la fonction
+	agentService.CheckAllAgents()
+
+	// 🎧 10. Écoute des résultats de tests TWAMP
 	go listenToTestResultsAndStore(db)
 
-	// 8. 🔄 Démarrage de composants spécifiques (testeurs, etc.)
-	go Serveur()                // Lancement du listener d’abord
-	time.Sleep(1 * time.Second) // Attente pour s’assurer que le port est bien en écoute
-	go client()                 // Ensuite envoyer le paquet vers 61000
+	// 🧪 11. Lancement du serveur et client TWAMP
+	go Serveur()
+	time.Sleep(1 * time.Second) // délai pour laisser le serveur démarrer
 
-	// 9. 🛑 Empêche le programme de se terminer
+	// 🛑 12. Blocage principal pour garder le serveur actif
 	select {}
 }

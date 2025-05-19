@@ -447,3 +447,28 @@ func receiveTCPPacket() ([]byte, error) {
 	}
 	return buffer[:n], nil
 }
+
+
+
+
+
+
+
+
+func addAgentToGroup(db *sql.DB, groupID, agentID int) error {
+    _, err := db.Exec(`INSERT INTO agent_link (group_id, agent_id) VALUES ($1, $2)`, groupID, agentID)
+    if err != nil {
+        log.Printf("Erreur lors de l'ajout du lien agent-groupe : %v\n", err)
+        return err
+    }
+    return nil
+}
+
+func removeAgentFromGroup(db *sql.DB, groupID, agentID int) error {
+    _, err := db.Exec(`DELETE FROM agent_link WHERE group_id = $1 AND agent_id = $2`, groupID, agentID)
+    if err != nil {
+        log.Printf("Erreur lors de la suppression du lien agent-groupe : %v\n", err)
+        return err
+    }
+    return nil
+}
