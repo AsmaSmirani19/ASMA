@@ -1,11 +1,20 @@
-// types.go
-package main
+package server
 
 import (
 	"time"
-
 	"github.com/lib/pq"
 )
+
+type TestConfig struct {
+	TestID         int    `json:"test_id"`
+	Name           string `json:"name"`
+	Duration       string `json:"duration"`
+	NumberOfAgents int    `json:"number_of_agents"`
+	SourceID       int    `json:"source_id"`
+	TargetID       int    `json:"target_id"`
+	ProfileID      int    `json:"profile_id"`
+	ThresholdID    int    `json:"threshold_id"`
+}
 
 
 // Déclaration du type Agent
@@ -17,7 +26,7 @@ type Agent struct {
 }
 
 type AgentHealthCheck struct {
-    ID        int       `db:"id"`         // ou uint selon ta config
+    ID        int       `db:"id"`         
     AgentID   int       `db:"agent_id"`
     Timestamp time.Time `db:"timestamp"`
     Status    string    `db:"status"`
@@ -94,16 +103,6 @@ type Threshold struct {
 	DisabledThresholds []string `json:"disabled_thresholds"`
 }
 
-type TestConfig struct {
-	ID             int    `json:"test_id"`
-	Name           string `json:"name"`
-	Duration       string `json:"duration"`
-	NumberOfAgents int    `json:"number_of_agents"`
-	SourceID       int    `json:"source_id"`
-	TargetID       int    `json:"target_id"`
-	ProfileID      int    `json:"profile_id"`
-	ThresholdID    int    `json:"threshold_id"`
-}
 
 
 

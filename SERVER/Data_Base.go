@@ -1,10 +1,9 @@
-package main
+package server
 
 import (
 	"database/sql"
 	"fmt"
 	"log"
-
 	"context"
 	"time"
 	
@@ -28,7 +27,6 @@ func connectToDB() (*sql.DB, error) {
 	} else {
 		log.Println("✅ Connexion à la base de données réussie")
 	}
-
 	return db, nil
 }
 
@@ -72,7 +70,7 @@ func GetTestConfig(db *sql.DB, testID int) (*TestConfig, error) {
 
 	var config TestConfig
 	err := db.QueryRow(query, testID).Scan(
-		&config.ID,
+		&config.TestID,
 		&config.Name,
 		&config.Duration,
 		&config.NumberOfAgents,
@@ -304,7 +302,7 @@ func linkAgentsToGroup(db *sql.DB, groupID int, agentIDs []int) error {
 		}
 	}
 
-	// Mise à jour du nombre d'agents liés dans la table agent-group
+ // Mise à jour du nombre d'agents liés dans la table agent-group
 	_, err = tx.Exec(`
 		UPDATE "agent-group"
 		SET number_of_agents = (

@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bytes"
@@ -7,17 +7,21 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"mon-projet-go/testpb"
 	"net"
+
 	"net/http"
+	
 	"time"
-	"io"
 
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 
+	
 	"github.com/rs/cors"
+
 )
 
 type TestResult struct {
@@ -39,6 +43,7 @@ type SendSessionRequestPacket struct {
 	Timeout       uint32
 	TypeP         uint8
 }
+
 type SessionAcceptPacket struct {
 	Accept         uint8
 	MBZ            uint8
@@ -48,16 +53,19 @@ type SessionAcceptPacket struct {
 	SID            uint32
 	HMAC           [16]byte
 }
+
 type StartSessionPacket struct {
 	Type byte
 	MBZ  uint8
 	HMAC [16]byte
 }
+
 type StartAckPacket struct {
 	Accept uint8
 	MBZ    uint8
 	HMAC   [16]byte
 }
+
 type StopSessionPacket struct {
 	Type             byte
 	Accept           uint8
@@ -161,6 +169,7 @@ func SerializeStartACKtPacket(packet *StartAckPacket) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
 func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
@@ -178,6 +187,7 @@ func SerializeStopSession(packet *StopSessionPacket) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
 func SendTCPPacket(packet []byte, addr string, port int) error {
 
 	timeout := 5 * time.Second
@@ -216,7 +226,7 @@ func identifyPacketType(data []byte) string {
 	}
 }
 
-func client(testConfig TestConfig) {
+func Client(testConfig TestConfig) {
 	var (
 		serverAddress = AppConfig.Network.ServerAddress
 		serverPort    = AppConfig.Network.ServerPort
@@ -397,7 +407,8 @@ func Serveur() {
 		}(conn)
 	}
 }
-//TestServiceServer
+
+// TestServiceServer
 type quickTestServer struct {
 	testpb.UnimplementedTestServiceServer
 }
@@ -466,6 +477,7 @@ func listenToTestResultsAndStore(db *sql.DB) {
 		}
 	}
 }
+
 // Implémentation du service Health côté serveur
 type healthServer struct {
 	testpb.UnimplementedHealthServer
@@ -498,8 +510,10 @@ func startGRPCServer() {
 	}
 }
 
-func main() {
-	// 🔧 1. Chargement de la configuration
+
+
+func Start() {
+// 🔧 1. Chargement de la configuration
 	LoadConfig("config_server.yaml")
 
 	// 📡 2. Lancement du serveur WebSocket en arrière-plan
@@ -512,9 +526,7 @@ func main() {
 	}
 	defer db.Close()
 
-
-
-	// 🌐 5. Définition des routes HTTP
+	// 🌐 4. Définition des routes HTTP
 	http.HandleFunc("/api/test/results", getTestResults)
 	http.HandleFunc("/api/agents", handleAgents(db))
 	http.HandleFunc("/api/agent-group", handleAgentGroup(db))
@@ -523,11 +535,9 @@ func main() {
 	http.HandleFunc("/api/threshold", handleThreshold(db))
 	http.HandleFunc("/api/tests", handleTests(db))
 	http.HandleFunc("/api/trigger-test", triggerTestHandler(db))
-
 	//http.HandleFunc("/ws/health", healthWebSocketHandler)
-	
 
-	// 🌍 7. Middleware CORS
+	// 🌍 5. Middleware CORS
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"http://localhost:4200"},
 		AllowedMethods: []string{"GET", "POST", "DELETE", "PUT"},
@@ -535,28 +545,28 @@ func main() {
 	})
 	handler := c.Handler(http.DefaultServeMux)
 
-	// 🚀 8. Lancement du serveur HTTP
+	// 🚀 6. Lancement du serveur HTTP
 	go func() {
 		fmt.Println("🌐 Serveur HTTP lancé sur http://localhost:5000")
 		log.Fatal(http.ListenAndServe(":5000", handler))
 	}()
 
-	// 🚀 9. Lancement du serveur gRPC
+	// 🚀 7. Lancement du serveur gRPC
 	go startGRPCServer()
 
-	// Création du service
+	// 8. Création du service
 	agentService := &AgentService{db: db}
-
-	// Appel de la fonction
 	agentService.CheckAllAgents()
 
-	// 🎧 10. Écoute des résultats de tests TWAMP
+	// 🎧 9. Écoute des résultats de tests TWAMP
 	go listenToTestResultsAndStore(db)
 
-	// 🧪 11. Lancement du serveur et client TWAMP
+	// 🧪 10. Lancement du serveur et client TWAMP
 	go Serveur()
 	time.Sleep(1 * time.Second) // délai pour laisser le serveur démarrer
 
-	// 🛑 12. Blocage principal pour garder le serveur actif
+	// 🛑 11. Blocage principal pour garder le serveur actif
 	select {}
 }
+
+

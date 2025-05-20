@@ -1,5 +1,6 @@
 module mon-projet-go
 
+
 go 1.24.1
 
 require (

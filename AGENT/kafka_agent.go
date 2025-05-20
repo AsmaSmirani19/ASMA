@@ -3,17 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"database/sql"  
 	"log"
-	"fmt"
 
-	"database/sql"   
+	"mon-projet-go/server" 
+
 	"github.com/segmentio/kafka-go"
 )
-
-type TestConfig struct {
-	TestID int `json:"test_id"`
-}
-
 
 // Structure des résultats de test à envoyer au backend
 type TestResult struct {
@@ -26,8 +22,8 @@ type TestResult struct {
 	AvgThroughputKbps  float64  `json:"avg_throughput_Kbps"`
 }
 
-// Fonction qui écoute les demandes de test depuis Kafka
-func listenToTestRequestsFromKafka(db *sql.DB) {
+//func listenToTestRequestsFromKafka(db *sql.DB) {
+	func listenToTestRequestsFromKafka(db *sql.DB) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: AppConfig.Kafka.Brokers,
 		Topic:   AppConfig.Kafka.TestRequestTopic,
@@ -38,86 +34,46 @@ func listenToTestRequestsFromKafka(db *sql.DB) {
 	for {
 		message, err := reader.ReadMessage(context.Background())
 		if err != nil {
-			log.Printf("Erreur lors de la lecture du message Kafka : %v", err)
+			log.Printf("❌ Erreur de lecture Kafka : %v", err)
 			continue
 		}
 
-		log.Printf("Message reçu de Kafka (test request) : %s", message.Value)
+		log.Printf("📨 Message Kafka reçu : %s", message.Value)
 
-		var testConfig TestConfig
-		err = json.Unmarshal(message.Value, &testConfig)
+		var testReq server.TestConfig // ✅ ici
+		if err := json.Unmarshal(message.Value, &testReq); err != nil {
+			log.Printf("❌ Erreur JSON : %v", err)
+			continue
+		}
+
+		log.Printf("🔄 Déclenchement test avec ID : %d", testReq.TestID)
+
+		testDetails, err := getTestDetailsByID(db, testReq.TestID)
 		if err != nil {
-			log.Printf("Erreur de désérialisation JSON : %v", err)
+			log.Printf("❌ Erreur récupération test : %v", err)
 			continue
 		}
 
-		log.Printf("Déclenchement du test avec TestID: %d", testConfig.TestID)
-		//go client(testConfig)
+		go server.Client(testDetails)
 	}
 }
 
-
-
-// Fonction pour exécuter un test et envoyer le résultat via Kafka
-func runTestAndSendResult() {
-	log.Println("Début du test QoS...")
-	ctx := context.Background()
-
-	// Récupérer les informations du test à partir de la configuration
-	target := AppConfig.DefaultTest.TargetIP
-	port := AppConfig.DefaultTest.TargetPort
-	duration := AppConfig.DefaultTest.Duration
-	interval := AppConfig.DefaultTest.Interval
-
-	// Créer une chaîne avec les paramètres nécessaires
-	params := fmt.Sprintf("target=%s&port=%d&duration=%s&interval=%s", target, port, duration, interval)
-
-	// Appeler la fonction startTest avec une chaîne formatée
-	stats, qos, err := startTest(params)
-	if err != nil {
-		log.Printf("Erreur pendant le test : %v", err)
-		return
-	}
-
-	log.Println("Test terminé.")
-	log.Printf("Envoyés: %d | Reçus: %d", stats.SentPackets, stats.ReceivedPackets)
-	log.Printf("Latence moyenne: %f ms", qos.AvgLatencyMs)
-	log.Printf("Jitter moyen: %f ms", qos.AvgJitterMs)
-
-	// Construction de l'objet de résultat
-	result := TestResult{
-		AgentID:           AppConfig.Sender.ID,
-		Target:            AppConfig.DefaultTest.TargetIP,
-		Port:              AppConfig.DefaultTest.TargetPort,
-		AvgThroughputKbps: qos.AvgThroughputKbps,
-		AvgLatencyMs:      qos.AvgLatencyMs,
-		AvgJitterMs:       qos.AvgJitterMs,
-		PacketLossPercent: qos.PacketLossPercent,
-	}
-
-	// Sérialisation en JSON
-	resultBytes, err := json.Marshal(result)
-	if err != nil {
-		log.Printf("Erreur lors de la sérialisation du résultat : %v", err)
-		return
-	}
-
-	// Envoi via Kafka
-	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers:  AppConfig.Kafka.Brokers,
-		Topic:    AppConfig.Kafka.TestResultTopic,
-		Balancer: &kafka.LeastBytes{},
-	})
-	defer writer.Close()
-
-	err = writer.WriteMessages(ctx, kafka.Message{
-		Key:   []byte("test-result"),
-		Value: resultBytes,
-	})
-	if err != nil {
-		log.Printf("Erreur lors de l'envoi du résultat via Kafka : %v", err)
-		return
-	}
-
-	log.Println("Résultat du test envoyé au backend via Kafka.")
+// ✅ Signature corrigée ici aussi
+func getTestDetailsByID(db *sql.DB, testID int) (server.TestConfig, error) {
+	var config server.TestConfig
+	query := `
+		SELECT id, name, duration, number_of_agents, source_id, target_id, profile_id, threshold_id
+		FROM test_configs
+		WHERE id = $1`
+	err := db.QueryRow(query, testID).Scan(
+		&config.TestID,
+		&config.Name,
+		&config.Duration,
+		&config.NumberOfAgents,
+		&config.SourceID,
+		&config.TargetID,
+		&config.ProfileID,
+		&config.ThresholdID,
+	)
+	return config, err
 }
