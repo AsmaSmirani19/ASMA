@@ -41,7 +41,7 @@ type QoSMetrics struct {
 	TotalJitter       int64   `json:"total_jitter"`
 }
 
-type plannedtest struct {
+type PlannedTest struct {
 	ID             int       `json:"id"`
 	TestName       string    `json:"test_name"`
 	TestDuration   string    `json:"test_duration"`   

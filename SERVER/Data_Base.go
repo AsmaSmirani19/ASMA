@@ -351,7 +351,7 @@ func getAgentsByGroupID(db *sql.DB, groupID int) ([]Agent, error) {
 }
 
 // test **********
-func saveTestToDB(db *sql.DB, test plannedtest) error {
+func saveTestToDB(db *sql.DB, test PlannedTest) error {
 	_, err := db.Exec(`
 		INSERT INTO "test"(
 			"test_name", 
@@ -390,7 +390,7 @@ func saveTestToDB(db *sql.DB, test plannedtest) error {
 	return nil
 }
 
-func getTestsFromDB(db *sql.DB) ([]plannedtest, error) {
+func getTestsFromDB(db *sql.DB) ([]PlannedTest, error) {
 	rows, err := db.Query(`
 		SELECT 
             "Id", 
@@ -413,9 +413,9 @@ func getTestsFromDB(db *sql.DB) ([]plannedtest, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var tests []plannedtest
+	var tests []PlannedTest
 	for rows.Next() {
-		var t plannedtest
+		var t PlannedTest
 		err := rows.Scan(
 			&t.ID,
 			&t.TestName,
@@ -447,7 +447,7 @@ func getTestsFromDB(db *sql.DB) ([]plannedtest, error) {
 	return tests, nil
 }
 
-func updateTestInDB(db *sql.DB, test plannedtest) error {
+func updateTestInDB(db *sql.DB, test PlannedTest) error {
 	_, err := db.Exec(`
 		UPDATE "test"
 		SET 

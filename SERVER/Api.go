@@ -424,7 +424,7 @@ func handleTests(db *sql.DB) http.HandlerFunc {
 		case http.MethodPost:
 			log.Println("🔍 Début du traitement de la méthode POST pour créer un test planifié")
 
-			var test plannedtest
+			var test PlannedTest
 			if err := json.NewDecoder(r.Body).Decode(&test); err != nil {
 				log.Printf("❌ Erreur de décodage des données du test: %v\n", err)
 				http.Error(w, "Erreur de décodage des données du test", http.StatusBadRequest)
@@ -478,7 +478,7 @@ func handleTests(db *sql.DB) http.HandlerFunc {
 		case http.MethodPut:
 			log.Println("🔍 Début du traitement de la méthode PUT pour mettre à jour un test planifié")
 
-			var test plannedtest
+			var test PlannedTest
 			if err := json.NewDecoder(r.Body).Decode(&test); err != nil {
 				log.Printf("❌ Erreur de décodage des données du test: %v\n", err)
 				http.Error(w, "Erreur de décodage des données du test", http.StatusBadRequest)

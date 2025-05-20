@@ -1,12 +1,15 @@
-package main
+package agent
 
 import (
 	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
+	"database/sql"
 
 	"log"
+	
+	_ "github.com/lib/pq"
 
 	"mon-projet-go/testpb"
 	"net"
@@ -143,9 +146,8 @@ func receivePacket(conn *net.UDPConn) ([]byte, error) {
 	return buffer[:n], nil
 }
 
-
 // Démarrage du test QoS
-func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
+func StartTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 	params, err := parseTestParameters(testParams)
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid test parameters: %v", err)
@@ -174,7 +176,7 @@ func startTest(testParams string) (*PacketStats, *QoSMetrics, error) {
 	testEnd := Stats.StartTime.Add(params.Duration)
 	for time.Now().Before(testEnd) {
 		fmt.Println("Tentative d'envoi du paquet...")
-		err := handleSender(Stats, qos, conn) // <- on passe la même conn à chaque fois
+		err := handleSender(Stats, qos, conn) 
 		if err != nil {
 			fmt.Printf("❌ Erreur handleSender: %v\n", err)
 			return nil, nil, fmt.Errorf("erreur lors de l'envoi du paquet: %v", err)
@@ -482,7 +484,7 @@ func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTest
 	// Exécution du test dans une goroutine
 	go func() {
 		defer close(results)
-		_, metrics, err := startTest(req.GetParameters())
+		_, metrics, err := StartTest(req.GetParameters())
 		if err != nil {
 			log.Printf("Test %s échoué: %v", req.GetTestId(), err)
 			return
@@ -562,23 +564,26 @@ func startClientStream() {
 	}
 }
 
-// =>=>=>=> test_health<=<=<= //
 
+func Start() {
 
-
-func main() {
 	log.Println("Démarrage de l'agent TWAMP...")
+
 
 	LoadConfig("config.yaml")
 
+	// Initialiser la connexion à la base
+	db, err := sql.Open("driver_name", "connection_string")
+	if err != nil {
+		log.Fatalf("Erreur connexion base : %v", err)
+	}
+	defer db.Close()
 
 	// Mode Reflector TWAMP
 	go listenAsReflector()
 
 	// Serveur gRPC pour Quick Tests
 	go startGRPCServer()
-
-
 
 	// Attente du démarrage des services
 	time.Sleep(2 * time.Second)
@@ -589,8 +594,8 @@ func main() {
 	// Connexion au backend gRPC (client stream)
 	go startClientStream()
 
-	// Kafka
-	//go listenToTestRequestsFromKafka()
+	// Kafka : passer la connexion db
+	listenToTestRequestsFromKafka(db)
 
 	// Blocage principal pour empêcher l'arrêt
 	select {}

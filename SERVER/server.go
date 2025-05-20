@@ -19,6 +19,8 @@ import (
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 
+	"mon-projet-go/agent"
+
 	
 	"github.com/rs/cors"
 
@@ -298,7 +300,22 @@ func Client(testConfig TestConfig) {
 	}
 	log.Println("✅ Start-Ack reçu.")
 
-	// 👉 Ici tu peux lancer les paquets TWAMP UDP, etc., selon testConfig.
+	// Construire JSON des paramètres pour startTest
+	testParamsBytes, err := json.Marshal(testConfig)
+	if err != nil {
+		log.Fatalf("Erreur conversion paramètres : %v", err)
+	}
+	testParams := string(testParamsBytes)
+
+	// Lancer le test QoS
+	stats, qos, err := agent.StartTest(testParams)
+	if err != nil {
+		log.Fatalf("Erreur startTest : %v", err)
+	}
+
+	// Log ou traiter les résultats
+	log.Printf("Test terminé : %+v %+v", stats, qos)
+
 
 	// 5. Envoyer Stop-Session
 	stopSessionPacket := StopSessionPacket{
@@ -514,7 +531,7 @@ func startGRPCServer() {
 
 func Start() {
 // 🔧 1. Chargement de la configuration
-	LoadConfig("config_server.yaml")
+	LoadConfig("server/config_server.yaml")
 
 	// 📡 2. Lancement du serveur WebSocket en arrière-plan
 	go StartWebSocketServer()

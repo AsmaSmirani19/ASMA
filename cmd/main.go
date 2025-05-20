@@ -3,6 +3,8 @@ package main
 import (
 	
 	"mon-projet-go/server"
+
+	"mon-projet-go/agent"
 		
 )
 
@@ -10,6 +12,10 @@ import (
 
 func main() {
 
-	server.Start() 
+	go server.Start() 
+	
+	go agent.Start()
+
+	 select {}
 
 }
