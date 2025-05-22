@@ -11,26 +11,6 @@ import (
 	"github.com/lib/pq"
 )
 
-// Fonction de connexion à la base de données
-func connectToDB() (*sql.DB, error) {
-	connStr := "host=localhost port=5432 user=postgres password=admin dbname=QoS_Results sslmode=disable"
-	db, err := sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatal("Erreur de connexion :", err)
-		return nil, err
-	}
-
-	// ✅ Ajoute cette vérification ici
-	err = db.Ping()
-	if err != nil {
-		log.Fatal("❌ Impossible de se connecter à la base de données :", err)
-		return nil, err
-	} else {
-		log.Println("✅ Connexion à la base de données réussie")
-	}
-	return db, nil
-}
-
 func saveResultsToDB(db *sql.DB, qos QoSMetrics) error {
 	_, err := db.Exec(`
 		INSERT INTO qos_results (
@@ -779,6 +759,9 @@ func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
 
 	return &config, nil
 }
+
+
+
 
 
 

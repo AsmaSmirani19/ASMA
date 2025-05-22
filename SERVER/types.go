@@ -6,6 +6,15 @@ import (
 	
 )
 
+type QoSMetrics struct {
+	PacketLossPercent float64 `json:"packet_loss_percent"`
+	AvgLatencyMs      int64   `json:"avg_latency_ms"`
+	AvgJitterMs       int64   `json:"avg_jitter_ms"`
+	AvgThroughputKbps float64 `json:"avg_throughput_kbps"`
+	TotalJitter       int64   `json:"total_jitter"`
+}
+
+
 type TestConfig struct {
 	TestID         int    `json:"test_id"`
 	Name           string `json:"name"`
@@ -17,8 +26,6 @@ type TestConfig struct {
 	ThresholdID    int    `json:"threshold_id"`
 }
 
-
-// Déclaration du type Agent
 type Agent struct {
 	ID           int                 `json:"id"          db:"id"`
 	Port         int  
@@ -34,14 +41,7 @@ type AgentHealthCheck struct {
     Status    string    `db:"status"`
 }
 
-// Déclaration du type QoSMetrics
-type QoSMetrics struct {
-	PacketLossPercent float64 `json:"packet_loss_percent"`
-	AvgLatencyMs      int64   `json:"avg_latency_ms"`
-	AvgJitterMs       int64   `json:"avg_jitter_ms"`
-	AvgThroughputKbps float64 `json:"avg_throughput_kbps"`
-	TotalJitter       int64   `json:"total_jitter"`
-}
+
 
 type PlannedTest struct {
 	ID             int       `json:"id"`

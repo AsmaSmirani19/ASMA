@@ -219,12 +219,6 @@ func StartTest(db *sql.DB, testID int) (*PacketStats, *QoSMetrics, error) {
 	if durationSec >= 1.0 && stats.TotalBytesReceived > 0 {
 		qos.AvgThroughputKbps = float64(stats.TotalBytesReceived*8) / durationSec / 1000
 	}
-
-	// Étape 7 : Vérification des seuils, utiliser config.Threshold (pointeur vers Threshold)
-	if config.Threshold != nil {
-		checkThresholds(qos, config.Threshold) // OK, même type *core.Threshold
-	}
-
 	SetLatestMetrics(qos)
 	return stats, qos, nil
 }
@@ -234,79 +228,6 @@ type Threshold struct {
 	LatencyThreshold    float64
 	JitterThreshold     float64
 	PacketLossThreshold float64
-}
-
-func checkThresholds(metrics *QoSMetrics, thresholds *core.Threshold) {
-	if thresholds == nil {
-		return
-	}
-
-	compare := func(value float64, operator string, threshold float64) bool {
-		switch operator {
-		case ">":
-			return value > threshold
-		case "<":
-			return value < threshold
-		case ">=":
-			return value >= threshold
-		case "<=":
-			return value <= threshold
-		case "==":
-			return value == threshold
-		default:
-			log.Printf("⚠️ Operateur inconnu '%s'", operator)
-			return false
-		}
-	}
-
-	switch thresholds.SelectedMetric {
-	case "latency":
-		if compare(metrics.AvgLatencyMs, thresholds.AvgOpr, thresholds.Avg) {
-			log.Printf("⚠️ Latency moyenne dépassée : %.2f ms %s %.2f ms", metrics.AvgLatencyMs, thresholds.AvgOpr, thresholds.Avg)
-		}
-		if compare(metrics.AvgLatencyMs, thresholds.MinOpr, thresholds.Min) {
-			log.Printf("⚠️ Latency minimum dépassée : %.2f ms %s %.2f ms", metrics.AvgLatencyMs, thresholds.MinOpr, thresholds.Min)
-		}
-		if compare(metrics.AvgLatencyMs, thresholds.MaxOpr, thresholds.Max) {
-			log.Printf("⚠️ Latency maximum dépassée : %.2f ms %s %.2f ms", metrics.AvgLatencyMs, thresholds.MaxOpr, thresholds.Max)
-		}
-
-	case "jitter":
-		if compare(metrics.AvgJitterMs, thresholds.AvgOpr, thresholds.Avg) {
-			log.Printf("⚠️ Jitter moyen dépassé : %.2f ms %s %.2f ms", metrics.AvgJitterMs, thresholds.AvgOpr, thresholds.Avg)
-		}
-		if compare(metrics.AvgJitterMs, thresholds.MinOpr, thresholds.Min) {
-			log.Printf("⚠️ Jitter minimum dépassé : %.2f ms %s %.2f ms", metrics.AvgJitterMs, thresholds.MinOpr, thresholds.Min)
-		}
-		if compare(metrics.AvgJitterMs, thresholds.MaxOpr, thresholds.Max) {
-			log.Printf("⚠️ Jitter maximum dépassé : %.2f ms %s %.2f ms", metrics.AvgJitterMs, thresholds.MaxOpr, thresholds.Max)
-		}
-
-	case "packetloss":
-		if compare(metrics.PacketLossPercent, thresholds.AvgOpr, thresholds.Avg) {
-			log.Printf("⚠️ Perte moyenne dépassée : %.2f%% %s %.2f%%", metrics.PacketLossPercent, thresholds.AvgOpr, thresholds.Avg)
-		}
-		if compare(metrics.PacketLossPercent, thresholds.MinOpr, thresholds.Min) {
-			log.Printf("⚠️ Perte minimum dépassée : %.2f%% %s %.2f%%", metrics.PacketLossPercent, thresholds.MinOpr, thresholds.Min)
-		}
-		if compare(metrics.PacketLossPercent, thresholds.MaxOpr, thresholds.Max) {
-			log.Printf("⚠️ Perte maximum dépassée : %.2f%% %s %.2f%%", metrics.PacketLossPercent, thresholds.MaxOpr, thresholds.Max)
-		}
-
-	case "bandwidth":
-		if compare(metrics.AvgThroughputKbps, thresholds.AvgOpr, thresholds.Avg) {
-			log.Printf("⚠️ Débit moyen dépassé : %.2f Kbps %s %.2f Kbps", metrics.AvgThroughputKbps, thresholds.AvgOpr, thresholds.Avg)
-		}
-		if compare(metrics.AvgThroughputKbps, thresholds.MinOpr, thresholds.Min) {
-			log.Printf("⚠️ Débit minimum dépassé : %.2f Kbps %s %.2f Kbps", metrics.AvgThroughputKbps, thresholds.MinOpr, thresholds.Min)
-		}
-		if compare(metrics.AvgThroughputKbps, thresholds.MaxOpr, thresholds.Max) {
-			log.Printf("⚠️ Débit maximum dépassé : %.2f Kbps %s %.2f Kbps", metrics.AvgThroughputKbps, thresholds.MaxOpr, thresholds.Max)
-		}
-
-	default:
-		log.Printf("⚠️ Type de métrique non géré : %s", thresholds.SelectedMetric)
-	}
 }
 
 // Struct pour les paramètres parsés
@@ -344,6 +265,7 @@ func GetLatestMetrics() *QoSMetrics {
 	defer metricsMutex.RUnlock()
 	return latestMetrics
 }
+
 func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error {
 	fmt.Println("🚀 handleSender : début")
 
@@ -352,7 +274,7 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		Port: Stats.TargetPort,
 	}
 
-	// Création du paquet TWAMP
+	// 🏗️ Création du paquet TWAMP
 	twampPacket := TwampTestPacket{
 		SequenceNumber:        uint32(Stats.SentPackets),
 		Timestamp:             uint64(time.Now().UnixNano()),
@@ -366,7 +288,7 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		Padding:               make([]byte, 20),
 	}
 
-	// Sérialisation
+	// 🧵 Sérialisation
 	serializedPacket, err := SerializeTwampTestPacket(&twampPacket)
 	if err != nil {
 		log.Printf("❌ Erreur de sérialisation: %v", err)
@@ -374,20 +296,19 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 	}
 	log.Printf("📦 Paquet sérialisé (%d octets), envoi vers %s:%d", len(serializedPacket), destAddr.IP, destAddr.Port)
 
-	// Envoi via la socket déjà bindée
+	// 📤 Envoi du paquet
 	_, err = conn.WriteToUDP(serializedPacket, destAddr)
 	if err != nil {
 		log.Printf("❌ Erreur d'envoi: %v", err)
 		return fmt.Errorf("erreur d'envoi du paquet TWAMP: %w", err)
 	}
 
-	// Réception via la même socket
+	// 📥 Réception du paquet
 	receivedData, err := receivePacket(conn)
 	if err != nil {
 		log.Printf("❌ Erreur de réception: %v", err)
 		return fmt.Errorf("réception paquet échouée: %w", err)
 	}
-
 	Stats.TotalBytesReceived += int64(len(receivedData))
 
 	var receivedPacket TwampTestPacket
@@ -397,36 +318,51 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 		return fmt.Errorf("erreur de désérialisation du paquet reçu: %w", err)
 	}
 
-	// Timestamp réception
+	// 🕒 Timestamp de réception
 	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
 
-	// Calculs QoS
+	// 📊 Calculs QoS
 	latency := int64(receivedPacket.ReceptionTimestamp - receivedPacket.SenderTimestamp)
 	Stats.LatencySamples = append(Stats.LatencySamples, latency)
 	Stats.LastLatency = latency
 
+	var jitterMs float64 = 0
 	if len(Stats.LatencySamples) > 1 {
 		prev := Stats.LatencySamples[len(Stats.LatencySamples)-2]
 		jitter := abs(latency - prev)
 		qos.TotalJitter += jitter
+		jitterMs = float64(qos.TotalJitter) / float64(len(Stats.LatencySamples)-1) / 1e6
 	}
 
 	Stats.ReceivedPackets++
-	Stats.SentPackets++ // Incrément après traitement
+	Stats.SentPackets++
 
-	var avgJitter float64
-	if len(Stats.LatencySamples) > 1 {
-		avgJitter = float64(qos.TotalJitter) / float64(len(Stats.LatencySamples)-1) / 1e6
-	}
+	latencyMs := float64(latency) / 1e6
 
-	fmt.Printf("✅ [Paquet %d] Latence: %.3f ms | Jitter moyen: %.3f ms\n",
+	// 📡 Calcul du débit moyen en kbps
+	elapsed := time.Since(Stats.StartTime).Seconds()
+	throughputKbps := float64(Stats.TotalBytesReceived*8) / 1000 / elapsed
+
+	// 🧾 Affichage des métriques
+	fmt.Printf("✅ [Paquet %d] Latence: %.3f ms | Jitter: %.3f ms | Débit: %.3f kbps\n",
 		Stats.SentPackets,
-		float64(latency)/1e6,
-		avgJitter)
+		latencyMs,
+		jitterMs,
+		throughputKbps)
+
+	// 🛢️ Sauvegarde des résultats dans la base de données
+	db, err := core.InitDB()
+	if err != nil {
+		log.Fatalf("❌ Impossible de se connecter à la base : %v", err)
+	}
+	defer db.Close()
+
+	if err := core.SaveAttemptResult(db, latencyMs, jitterMs, throughputKbps); err != nil {
+		log.Printf("❌ Erreur insertion BDD: %v", err)
+	}
 
 	return nil
 }
-
 
 func handleReflector(conn *net.UDPConn, addr *net.UDPAddr, data []byte) error {
 	var receivedPacket TwampTestPacket
@@ -439,6 +375,9 @@ func handleReflector(conn *net.UDPConn, addr *net.UDPAddr, data []byte) error {
 
 	// 2. Ajout du timestamp de réception
 	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
+
+	// ✅ 3. Mise à jour du SenderTimestamp pour refléter l'instant du renvoi
+	receivedPacket.SenderTimestamp = uint64(time.Now().UnixNano())
 
 	// 3. Sérialisation du paquet modifié
 	serializedPacket, err := SerializeTwampTestPacket(&receivedPacket)
@@ -453,7 +392,7 @@ func handleReflector(conn *net.UDPConn, addr *net.UDPAddr, data []byte) error {
 	}
 	log.Printf("✅ Paquet réponse envoyé à %s (%d octets)", addr.String(), len(serializedPacket))
 	log.Printf("🎯 Paquet reçu: Sequence #%d", receivedPacket.SequenceNumber)
-    log.Printf("📦 Renvoi du paquet vers %s", addr.String())
+	log.Printf("📦 Renvoi du paquet vers %s", addr.String())
 
 	return nil
 }
@@ -554,7 +493,6 @@ func Start(db *sql.DB) {
 	log.Println("Démarrage de l'agent TWAMP...")
 
 	LoadConfig("agent/config.yaml")
-
 
 	// Mode Reflector TWAMP
 	go listenAsReflector()

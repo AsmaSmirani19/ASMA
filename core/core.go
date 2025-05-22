@@ -5,7 +5,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	_ "github.com/lib/pq" 
 )
+
+func InitDB() (*sql.DB, error) {
+	return sql.Open("postgres", "host=localhost port=5432 user=postgres password=admin dbname=QoS_Results sslmode=disable")
+}
 
 func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, error) {
 	query := `
@@ -140,43 +145,12 @@ func ParsePGInterval(interval string) (time.Duration, error) {
 	return 0, fmt.Errorf("format interval invalide: %q", interval)
 }
 
-// Structures
-
-type FullTestConfiguration struct {
-	TestID         int
-	Name           string
-	RawDuration    string
-	Duration       time.Duration
-	NumberOfAgents int
-	SourceID       int
-	SourceIP       string
-	SourcePort     int
-	TargetID       int
-	TargetIP       string
-	TargetPort     int
-	ProfileID      int
-	ThresholdID    int
-	Profile        *Profile
-	Threshold      *Threshold
+func SaveAttemptResult(db *sql.DB, latency, jitter, throughput float64) error {
+	query := `
+		INSERT INTO attempt_results (latency_ms, jitter_ms, throughput_kbps)
+		VALUES ($1, $2, $3)
+	`
+	_, err := db.Exec(query, latency, jitter, throughput)
+	return err
 }
 
-type Profile struct {
-	ID              int
-	SendingInterval time.Duration
-	PacketSize      int
-	PacketRate      int // Remarque : dans ta table tu as "time_between_attempts" mais pas packet_rate, à voir si tu l'utilises
-}
-
-type Threshold struct {
-	ID             int
-	Name           string
-	Avg            float64
-	Min            float64
-	Max            float64
-	AvgStatus      string
-	MinStatus      string
-	AvgOpr         string
-	MinOpr         string
-	MaxOpr         string
-	SelectedMetric string
-}
