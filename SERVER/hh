@@ -265,3 +265,84 @@ func runTestAndSendResult() {
 
 	log.Println("Résultat du test envoyé au backend via Kafka.")
 }
+
+
+
+
+
+
+
+
+
+*****************************************//////********************************
+
+// RunQuickTest avec gestion de contexte et streaming
+func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
+	// Réception d'un message (devrait être une requête)
+	msg, err := stream.Recv()
+	if err != nil {
+		return fmt.Errorf("échec réception message: %v", err)
+	}
+
+	// Extraction de la requête de test
+	reqMsg, ok := msg.Message.(*testpb.QuickTestMessage_Request)
+	if !ok {
+		return fmt.Errorf("message reçu n’est pas une requête de test")
+	}
+
+	req := reqMsg.Request
+
+	log.Printf("Nouveau test reçu - ID: %s, Paramètres: %s", req.GetTestId(), req.GetParameters())
+
+	// Création d'un contexte annulable pour le test
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
+	a.mu.Lock()
+	if a.currentTestCancel != nil {
+		a.currentTestCancel() // Annule tout test précédent
+	}
+	a.currentTestCancel = cancel
+	a.mu.Unlock()
+
+	// Canal pour les résultats
+	results := make(chan *QoSMetrics, 10)
+
+	// Exécution du test dans une goroutine
+	go func() {
+		defer close(results)
+		_, metrics, err := StartTest(req.GetParameters())
+		if err != nil {
+			log.Printf("Test %s échoué: %v", req.GetTestId(), err)
+			return
+		}
+		results <- metrics
+	}()
+
+	// Envoi des résultats au serveur
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case qos, ok := <-results:
+			if !ok {
+				return nil
+			}
+			respMsg := &testpb.QuickTestMessage{
+				Message: &testpb.QuickTestMessage_Response{
+					Response: &testpb.QuickTestResponse{
+						Status: testpb.TestStatus_COMPLETE.String(),
+						Result: fmt.Sprintf("loss:%.2f,latency:%.2f,throughput:%.2f",
+							float64(qos.PacketLossPercent),
+							float64(qos.AvgLatencyMs),
+							float64(qos.AvgThroughputKbps)),
+					},
+				},
+			}
+
+			if err := stream.Send(respMsg); err != nil {
+				return fmt.Errorf("échec envoi résultats: %v", err)
+			}
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"log"
 	"context"
 	"time"
+	"errors"
 	
 	"github.com/lib/pq"
 )
@@ -91,13 +92,16 @@ func GetTestConfig(db *sql.DB, testID int) (*TestConfig, error) {
 // Agent_List
 func saveAgentToDB(db *sql.DB, agent *Agent) error {
 	err := db.QueryRow(`
-		INSERT INTO "Agent_List"("Name", "Address", "Test_health")
-		VALUES($1, $2, $3)
+		INSERT INTO "Agent_List"("Name", "Address", "Port", "Test_health")
+		VALUES($1, $2, $3, $4)
 		RETURNING id
-	`, agent.Name,
+	`, 
+		agent.Name,
 		agent.Address,
+		agent.Port,       // <-- ajouté ici
 		agent.TestHealth,
-		).Scan(&agent.ID) // 👈 modifie bien le champ de l'objet original
+	).Scan(&agent.ID) // 👈 modifie bien le champ de l'objet original
+
 	if err != nil {
 		log.Printf("Erreur lors de l'insertion dans la base de données : %v\n", err)
 		return err
@@ -106,9 +110,10 @@ func saveAgentToDB(db *sql.DB, agent *Agent) error {
 	return nil
 }
 
+
 // Récupère tous les agents depuis Agent_List
 func getAgentsFromDB(db *sql.DB) ([]Agent, error) {
-	rows, err := db.Query(`SELECT id, "Name", "Address", "Test_health" FROM "Agent_List"`)
+	rows, err := db.Query(`SELECT id, "Name", "Address",  "Port", "Test_health" FROM "Agent_List"`)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +122,7 @@ func getAgentsFromDB(db *sql.DB) ([]Agent, error) {
 	var agents []Agent
 	for rows.Next() {
 		var a Agent
-		err := rows.Scan(&a.ID, &a.Name, &a.Address, &a.TestHealth) 
+		err := rows.Scan(&a.ID, &a.Name, &a.Address, &a.Port , &a.TestHealth) 
 		if err != nil {
 			return nil, err
 		}
@@ -130,9 +135,9 @@ func getAgentsFromDB(db *sql.DB) ([]Agent, error) {
 func updateAgentInDB(db *sql.DB, agent Agent) error {
 	_, err := db.Exec(`
 		UPDATE "Agent_List"
-		SET "Name" = $1, "Address" = $2, "Test_health" = $3
-		WHERE id = $4`,
-		agent.Name, agent.Address, agent.TestHealth,  agent.ID,
+		SET "Name" = $1, "Address" = $2, "Port" = $3, "Test_health" = $4
+		WHERE id = $5`,
+		agent.Name, agent.Address, agent.Port, agent.TestHealth,  agent.ID,
 	)
 	if err != nil {
 		log.Printf("Erreur lors de la mise à jour : %v\n", err)
@@ -490,18 +495,25 @@ func deleteTestFromDB(db *sql.DB, testID int) error {
 
 // test profile ***********
 func saveTestProfileToDB(db *sql.DB, profile testProfile) error {
+	// Validation des champs
+	if profile.ProfileName == "" || profile.PacketSize <= 0 || profile.TimeBetweenAttempts <= 0 || profile.CreationDate.IsZero() {
+		log.Println("❌ Profil invalide : champs obligatoires manquants ou invalides")
+		return errors.New("profil invalide : champs obligatoires manquants ou invalides")
+	}
+
 	_, err := db.Exec(`
 		INSERT INTO "test_profile"(
 			"profile_name", 
 			"creation_date", 
-			"packet_size"
-		) VALUES ($1, $2, $3)
+			"packet_size",
+			"time_between_attempts"
+		) VALUES ($1, $2, $3 ,  $4)
 	`,
-		profile.ProfileName,  // $1
-		profile.CreationDate, // $2
-		profile.PacketSize,   // $3
+		profile.ProfileName,
+		profile.CreationDate,
+		profile.PacketSize,
+		profile.TimeBetweenAttempts,
 	)
-
 	if err != nil {
 		log.Println("❌ Erreur lors de l'insertion du test profile :", err)
 		return err
@@ -511,7 +523,10 @@ func saveTestProfileToDB(db *sql.DB, profile testProfile) error {
 }
 
 func getTestProfilesFromDB(db *sql.DB) ([]testProfile, error) {
-	rows, err := db.Query(`SELECT "ID", "profile_name", "creation_date", "packet_size" FROM "test_profile"`)
+	rows, err := db.Query(`
+		SELECT "ID", "profile_name", "creation_date", "packet_size", "time_between_attempts"
+		FROM "test_profile"
+	`)
 	if err != nil {
 		log.Printf("Erreur lors de la récupération des test profiles : %v\n", err)
 		return nil, err
@@ -521,7 +536,7 @@ func getTestProfilesFromDB(db *sql.DB) ([]testProfile, error) {
 	var profiles []testProfile
 	for rows.Next() {
 		var p testProfile
-		err := rows.Scan(&p.ID, &p.ProfileName, &p.CreationDate, &p.PacketSize)
+		err := rows.Scan(&p.ID, &p.ProfileName, &p.CreationDate, &p.PacketSize, &p.TimeBetweenAttempts)
 		if err != nil {
 			log.Printf("Erreur lors de la lecture des données du test profile : %v\n", err)
 			return nil, err
@@ -546,9 +561,17 @@ func getTestProfilesFromDB(db *sql.DB) ([]testProfile, error) {
 func updateTestProfileInDB(db *sql.DB, profile testProfile) error {
 	_, err := db.Exec(`
 		UPDATE "test_profile"
-		SET "profile_name" = $1, "creation_date" = $2, "packet_size" = $3
-		WHERE "ID" = $4`,
-		profile.ProfileName, profile.CreationDate, profile.PacketSize, profile.ID,
+		SET "profile_name" = $1,
+			"creation_date" = $2,
+			"packet_size" = $3,
+			"time_between_attempts" = $4
+		WHERE "ID" = $5
+	`,
+		profile.ProfileName,
+		profile.CreationDate,
+		profile.PacketSize,
+		profile.TimeBetweenAttempts,
+		profile.ID,
 	)
 	if err != nil {
 		log.Printf("Erreur lors de la mise à jour du test profile avec ID %d : %v\n", profile.ID, err)
@@ -711,3 +734,51 @@ func deleteThresholdFromDB(db *sql.DB, thresholdID int64) error {
 	log.Printf("Threshold avec ID %d supprimé avec succès.\n", thresholdID)
 	return nil
 }
+
+
+func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
+	query := `
+		SELECT 
+			t."Id",
+			t.test_name,
+			t.test_duration::text,  -- CAST de l'interval en texte
+			t.number_of_agents,
+			t.source_id,
+			sa."Address" AS source_ip,
+			sa."Port" AS source_port,
+			t.target_id,
+			ta."Address" AS target_ip,
+			ta."Port" AS target_port,
+			t.profile_id,
+			t.threshold_id
+		FROM test t
+		JOIN "Agent_List" sa ON t.source_id = sa.id
+		JOIN "Agent_List" ta ON t.target_id = ta.id
+		WHERE t."Id" = $1
+	`
+
+	var config TestConfigWithAgents
+	err := db.QueryRow(query, testID).Scan(
+		&config.TestID,
+		&config.Name,
+		&config.Duration,
+		&config.NumberOfAgents,
+		&config.SourceID,
+		&config.SourceIP,
+		&config.SourcePort,
+		&config.TargetID,
+		&config.TargetIP,
+		&config.TargetPort,
+		&config.ProfileID,
+		&config.ThresholdID,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("erreur lors de la récupération de la configuration complète: %v", err)
+	}
+
+	return &config, nil
+}
+
+
+

@@ -13,17 +13,16 @@ import (
 	"net"
 
 	"net/http"
-	
+
 	"time"
 
 	"github.com/segmentio/kafka-go"
 	"google.golang.org/grpc"
 
 	"mon-projet-go/agent"
+	"mon-projet-go/core"
 
-	
 	"github.com/rs/cors"
-
 )
 
 type TestResult struct {
@@ -228,27 +227,35 @@ func identifyPacketType(data []byte) string {
 	}
 }
 
-func Client(testConfig TestConfig) {
-	var (
-		serverAddress = AppConfig.Network.ServerAddress
-		serverPort    = AppConfig.Network.ServerPort
-		senderPort    = AppConfig.Network.SenderPort
-		receiverPort  = AppConfig.Network.ReceiverPort
-		timeout       = AppConfig.Network.Timeout
-	)
+func Client(testID int, db *sql.DB) {
+	log.Println("🔵 [Client] Début d'exécution du client...")
 
+	config, err := core.LoadFullTestConfiguration(db, testID)
+	if err != nil {
+		log.Fatalf("❌ [Client] Erreur chargement configuration test : %v", err)
+	}
+	log.Printf("✅ [Client] Configuration chargée : %+v", config)
+
+	serverAddress := AppConfig.Network.ServerAddress
+	serverPort := AppConfig.Network.ServerPort
+	senderPort := AppConfig.Network.SenderPort
+	receiverPort := AppConfig.Network.ReceiverPort
+	timeout := AppConfig.Network.Timeout
+
+	log.Printf("🔌 [Client] Connexion à %s:%d ...", serverAddress, serverPort)
 	conn, err := net.Dial("tcp", fmt.Sprintf("[%s]:%d", serverAddress, serverPort))
 	if err != nil {
-		log.Fatalf("Erreur de connexion au serveur TCP : %v", err)
+		log.Fatalf("❌ [Client] Erreur de connexion au serveur TCP : %v", err)
 	}
 	defer conn.Close()
+	log.Println("✅ [Client] Connexion TCP établie.")
 
-	// 1. Envoyer Session-Request
+	// 1. Envoi Session-Request
 	packet := SendSessionRequestPacket{
 		Type: PacketTypeSessionRequest,
 		SenderAddress: func() [16]byte {
 			var ip [16]byte
-			copy(ip[:], net.ParseIP("127.0.0.1").To16())
+			copy(ip[:], net.ParseIP(config.SourceIP).To16())
 			return ip
 		}(),
 		ReceiverPort:  uint16(receiverPort),
@@ -259,23 +266,24 @@ func Client(testConfig TestConfig) {
 		TypeP:         0x05,
 	}
 
-	log.Println("Envoi Session-Request...")
+	log.Println("📤 [Client] Envoi Session-Request...")
 	serializedPacket, err := SerializePacket(&packet)
 	if err != nil {
-		log.Fatalf("Erreur de sérialisation : %v", err)
+		log.Fatalf("❌ [Client] Erreur de sérialisation Session-Request : %v", err)
 	}
+	log.Printf("📦 [Client] Paquet Session-Request (hex) : %x", serializedPacket)
 	_, err = conn.Write(serializedPacket)
 	if err != nil {
-		log.Fatalf("Erreur d'envoi du Session-Request : %v", err)
+		log.Fatalf("❌ [Client] Erreur d'envoi du Session-Request : %v", err)
 	}
 
 	// 2. Lire Accept-Session
 	buffer := make([]byte, 1024)
 	n, err := conn.Read(buffer)
 	if err != nil {
-		log.Fatalf("Erreur de lecture (Accept-Session) : %v", err)
+		log.Fatalf("❌ [Client] Erreur de lecture (Accept-Session) : %v", err)
 	}
-	log.Printf("Données reçues (Accept-session) : %x", buffer[:n])
+	log.Printf("📥 [Client] Données reçues (Accept-session) : %x", buffer[:n])
 
 	// 3. Envoyer Start-Session
 	startSessionPacket := StartSessionPacket{
@@ -283,41 +291,33 @@ func Client(testConfig TestConfig) {
 		MBZ:  0,
 		HMAC: [16]byte{},
 	}
-	log.Println("Envoi Start-Session...")
+	log.Println("📤 [Client] Envoi Start-Session...")
 	serializedStart, err := SerializeStartPacket(&startSessionPacket)
 	if err != nil {
-		log.Fatalf("Erreur de sérialisation Start-Session : %v", err)
+		log.Fatalf("❌ [Client] Erreur de sérialisation Start-Session : %v", err)
 	}
+	log.Printf("📦 [Client] Paquet Start-Session (hex) : %x", serializedStart)
 	_, err = conn.Write(serializedStart)
 	if err != nil {
-		log.Fatalf("Erreur d'envoi Start-Session : %v", err)
+		log.Fatalf("❌ [Client] Erreur d'envoi Start-Session : %v", err)
 	}
 
 	// 4. Lire Start-Ack
 	n, err = conn.Read(buffer)
 	if err != nil {
-		log.Fatalf("Erreur de lecture (Start-Ack) : %v", err)
+		log.Fatalf("❌ [Client] Erreur de lecture (Start-Ack) : %v", err)
 	}
-	log.Println("✅ Start-Ack reçu.")
+	log.Printf("📥 [Client] Start-Ack reçu : %x", buffer[:n])
 
-	// Construire JSON des paramètres pour startTest
-	testParamsBytes, err := json.Marshal(testConfig)
+	// 5. Démarrer le test
+	log.Println("🚀 [Client] Lancement du test agent.StartTest...")
+	stats, qos, err := agent.StartTest(db, config.TestID)
 	if err != nil {
-		log.Fatalf("Erreur conversion paramètres : %v", err)
+		log.Fatalf("❌ [Client] Erreur startTest : %v", err)
 	}
-	testParams := string(testParamsBytes)
+	log.Printf("✅ [Client] Test terminé. Stats : %+v | QoS : %+v", stats, qos)
 
-	// Lancer le test QoS
-	stats, qos, err := agent.StartTest(testParams)
-	if err != nil {
-		log.Fatalf("Erreur startTest : %v", err)
-	}
-
-	// Log ou traiter les résultats
-	log.Printf("Test terminé : %+v %+v", stats, qos)
-
-
-	// 5. Envoyer Stop-Session
+	// 6. Envoyer Stop-Session
 	stopSessionPacket := StopSessionPacket{
 		Type:             PacketTypeStopSession,
 		Accept:           0,
@@ -325,57 +325,62 @@ func Client(testConfig TestConfig) {
 		NumberOfSessions: 1,
 		HMAC:             [16]byte{},
 	}
-	log.Println("Envoi Stop-Session...")
+	log.Println("📤 [Client] Envoi Stop-Session...")
 	serializedStop, err := SerializeStopSession(&stopSessionPacket)
 	if err != nil {
-		log.Fatalf("Erreur de sérialisation Stop-Session : %v", err)
+		log.Fatalf("❌ [Client] Erreur de sérialisation Stop-Session : %v", err)
 	}
+	log.Printf("📦 [Client] Paquet Stop-Session (hex) : %x", serializedStop)
 	_, err = conn.Write(serializedStop)
 	if err != nil {
-		log.Fatalf("Erreur d'envoi Stop-Session : %v", err)
+		log.Fatalf("❌ [Client] Erreur d'envoi Stop-Session : %v", err)
 	}
+
+	log.Println("✅ [Client] Fin du client.")
 }
 
 func Serveur() {
-	// Démarrer un serveur TCP sur le port configuré
+	log.Println("🟢 [Serveur] Démarrage du serveur...")
+
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", AppConfig.Network.ServerPort))
 	if err != nil {
-		log.Fatalf("Erreur de serveur TCP : %v", err)
+		log.Fatalf("❌ [Serveur] Erreur de serveur TCP : %v", err)
 	}
 	defer listener.Close()
-
-	log.Printf("Serveur en attente de connexions sur le port %d...\n", AppConfig.Network.ServerPort)
+	log.Printf("✅ [Serveur] En attente de connexions sur le port %d...\n", AppConfig.Network.ServerPort)
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Printf("Erreur d'acceptation de la connexion : %v", err)
+			log.Printf("❌ [Serveur] Erreur d'acceptation de la connexion : %v", err)
 			continue
 		}
+		log.Println("🔗 [Serveur] Nouvelle connexion acceptée.")
 
-		// Gérer la connexion dans une nouvelle goroutine
 		go func(conn net.Conn) {
 			defer conn.Close()
-
 			buf := make([]byte, 1024)
 
 			for {
 				n, err := conn.Read(buf)
 				if err != nil {
 					if err == io.EOF {
-						log.Println("Connexion fermée par le client.")
+						log.Println("📴 [Serveur] Connexion fermée par le client.")
 					} else {
-						log.Printf("Erreur de lecture de la connexion : %v", err)
+						log.Printf("❌ [Serveur] Erreur de lecture : %v", err)
 					}
 					return
 				}
 
 				data := buf[:n]
+				log.Printf("📦 [Serveur] Paquet brut reçu : %x", data)
+
 				packetType := identifyPacketType(data)
+				log.Printf("🔍 [Serveur] Type de paquet identifié : %s", packetType)
 
 				switch packetType {
 				case "SessionRequest":
-					log.Println("Paquet SessionRequest reçu.")
+					log.Println("✅ [Serveur] Paquet SessionRequest reçu.")
 					acceptSessionPacket := SessionAcceptPacket{
 						Accept: 0,
 						MBZ:    0,
@@ -383,18 +388,19 @@ func Serveur() {
 					}
 					serializedPacket, err := SerializeAcceptPacket(&acceptSessionPacket)
 					if err != nil {
-						log.Printf("Erreur de sérialisation du paquet Accept-Session : %v", err)
+						log.Printf("❌ [Serveur] Erreur de sérialisation Accept-Session : %v", err)
 						return
 					}
+					log.Printf("📤 [Serveur] Envoi Accept-Session : %x", serializedPacket)
 					_, err = conn.Write(serializedPacket)
 					if err != nil {
-						log.Printf("Erreur d'envoi du paquet Accept-Session : %v", err)
+						log.Printf("❌ [Serveur] Erreur d'envoi Accept-Session : %v", err)
 						return
 					}
-					log.Println("Paquet Accept-Session envoyé.")
+					log.Println("✅ [Serveur] Accept-Session envoyé.")
 
 				case "StartSession":
-					log.Println("Paquet StartSession reçu.")
+					log.Println("✅ [Serveur] Paquet StartSession reçu.")
 					startAckPacket := StartAckPacket{
 						Accept: 0,
 						MBZ:    0,
@@ -402,23 +408,24 @@ func Serveur() {
 					}
 					serializedStartAckPacket, err := SerializeStartACKtPacket(&startAckPacket)
 					if err != nil {
-						log.Printf("Erreur de sérialisation du paquet Start-Ack : %v", err)
+						log.Printf("❌ [Serveur] Erreur de sérialisation Start-Ack : %v", err)
 						return
 					}
+					log.Printf("📤 [Serveur] Envoi Start-Ack : %x", serializedStartAckPacket)
 					_, err = conn.Write(serializedStartAckPacket)
 					if err != nil {
-						log.Printf("Erreur d'envoi du paquet Start-Ack : %v", err)
+						log.Printf("❌ [Serveur] Erreur d'envoi Start-Ack : %v", err)
 						return
 					}
-					log.Println("Paquet Start-Ack envoyé.")
+					log.Println("✅ [Serveur] Start-Ack envoyé.")
 
 				case "StopSession":
-					log.Println("Paquet StopSession reçu.")
-					log.Println("Session terminée.")
-					return // Fermer la session proprement
+					log.Println("✅ [Serveur] Paquet StopSession reçu.")
+					log.Println("✅ [Serveur] Session terminée proprement.")
+					return
 
 				default:
-					log.Println("Paquet inconnu reçu.")
+					log.Printf("⚠️ [Serveur] Paquet inconnu ou type non géré. Données : %x", data)
 				}
 			}
 		}(conn)
@@ -527,21 +534,13 @@ func startGRPCServer() {
 	}
 }
 
+func Start(db *sql.DB) {
 
-
-func Start() {
-// 🔧 1. Chargement de la configuration
+	// 🔧 1. Chargement de la configuration
 	LoadConfig("server/config_server.yaml")
 
 	// 📡 2. Lancement du serveur WebSocket en arrière-plan
 	go StartWebSocketServer()
-
-	// 🔌 3. Connexion à la base de données
-	db, err := connectToDB()
-	if err != nil {
-		log.Fatalf("Erreur de connexion DB : %v", err)
-	}
-	defer db.Close()
 
 	// 🌐 4. Définition des routes HTTP
 	http.HandleFunc("/api/test/results", getTestResults)
@@ -585,5 +584,3 @@ func Start() {
 	// 🛑 11. Blocage principal pour garder le serveur actif
 	select {}
 }
-
-

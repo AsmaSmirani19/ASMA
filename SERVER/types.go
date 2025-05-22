@@ -3,12 +3,13 @@ package server
 import (
 	"time"
 	"github.com/lib/pq"
+	
 )
 
 type TestConfig struct {
 	TestID         int    `json:"test_id"`
 	Name           string `json:"name"`
-	Duration       string `json:"duration"`
+	Duration       string   `json:"duration"`
 	NumberOfAgents int    `json:"number_of_agents"`
 	SourceID       int    `json:"source_id"`
 	TargetID       int    `json:"target_id"`
@@ -19,10 +20,11 @@ type TestConfig struct {
 
 // Déclaration du type Agent
 type Agent struct {
-	ID           int                 `json:"id" db:"id"`
-	Name         string              `json:"name" db:"Name"`
-	Address      string              `json:"address" db:"Address"`
-	TestHealth   bool                `json:"testhealth" db:"Test_health"`
+	ID           int                 `json:"id"          db:"id"`
+	Port         int  
+	Name         string              `json:"name"        db:"Name"`
+	Address      string              `json:"address"     db:"Address"`
+	TestHealth   bool                `json:"testhealth"  db:"Test_health"`
 }
 
 type AgentHealthCheck struct {
@@ -78,10 +80,11 @@ type AgentLinkPayload struct {
 }
 
 type testProfile struct {
-	ID           int              `json:"id"`
-	ProfileName  string           `json:"profile_name"`
-	CreationDate time.Time        `json:"creation_date"` 
-	PacketSize   int		      `json:"packet_size"`
+    ID                  int       `json:"id"`
+    ProfileName         string    `json:"profile_name"`
+    CreationDate        time.Time `json:"creation_date"`
+    PacketSize          int       `json:"packet_size"`
+    TimeBetweenAttempts int       `json:"time_between_attempts"`
 }
 
 type Threshold struct {
@@ -101,6 +104,21 @@ type Threshold struct {
 	
 	ActiveThresholds  []string `json:"active_thresholds"`
 	DisabledThresholds []string `json:"disabled_thresholds"`
+}
+
+type TestConfigWithAgents struct {
+	TestID         int
+	Name           string
+	Duration       string
+	NumberOfAgents int
+	SourceID       int
+	SourceIP       string
+	SourcePort     int
+	TargetID       int
+	TargetIP       string
+	TargetPort     int
+	ProfileID      int
+	ThresholdID    int
 }
 
 

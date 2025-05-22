@@ -7,6 +7,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+
+var AppConfig Config
+
+func LoadConfig(filename string) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		log.Fatalf("Erreur lecture config: %v", err)
+	}
+
+	if err := yaml.Unmarshal(data, &AppConfig); err != nil {
+		log.Fatalf("Erreur parsing config YAML: %v", err)
+	}
+}
+
 type Config struct {
 	Server struct {
 		TCPListener struct {
@@ -47,15 +61,4 @@ type Config struct {
 	
 
 
-var AppConfig Config
 
-func LoadConfig(filename string) {
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		log.Fatalf("Erreur lecture config: %v", err)
-	}
-
-	if err := yaml.Unmarshal(data, &AppConfig); err != nil {
-		log.Fatalf("Erreur parsing config YAML: %v", err)
-	}
-}

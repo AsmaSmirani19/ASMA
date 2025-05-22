@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"io"
+	"bytes"
 
 	_ "github.com/lib/pq" 
 )
@@ -532,13 +534,20 @@ func handleTests(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func handleTestProfile(db *sql.DB) http.HandlerFunc {
+ func handleTestProfile(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		switch r.Method {
 
-		case http.MethodPost:
+			
+
+				case http.MethodPost:
 			log.Println("🔍 Début du traitement de la méthode POST pour créer un test profile")
+
+			// 🔽 Ajoute ce bloc pour logguer le corps brut
+			body, _ := io.ReadAll(r.Body)
+			log.Printf("📥 Corps brut reçu : %s\n", string(body))
+			r.Body = io.NopCloser(bytes.NewBuffer(body)) // Permet de relire le body après lecture
 
 			var profile testProfile
 			if err := json.NewDecoder(r.Body).Decode(&profile); err != nil {
@@ -549,6 +558,7 @@ func handleTestProfile(db *sql.DB) http.HandlerFunc {
 
 			log.Printf("📦 Test profile reçu : %+v\n", profile)
 
+	// ...
 			if err := saveTestProfileToDB(db, profile); err != nil {
 				log.Printf("❌ Erreur lors de l'enregistrement du test profile : %v\n", err)
 				http.Error(w, "Erreur lors de l'enregistrement du test profile", http.StatusInternalServerError)

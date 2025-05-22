@@ -4,7 +4,7 @@ server:
 
 network:
   server_address: "127.0.0.1"
-  server_port: 61000
+  server_port: 8080
   sender_port: 6000
   receiver_port: 5000
   timeout: 30 
@@ -19,7 +19,7 @@ grpc:
 
 websocket:
   address: "127.0.0.1"
-  port: 8080
+  port: 8082
 
 kafka:
   brokers:

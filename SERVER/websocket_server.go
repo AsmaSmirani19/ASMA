@@ -3,10 +3,8 @@ package server
 import (
 	"log"
 	"net/http"
-	"encoding/json" 
-
 	"fmt"
-	"time"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -51,45 +49,17 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func StartWebSocketServer() {
-	// Enregistre le handler WebSocket
-	http.HandleFunc("/ws", handleWebSocket)
+    // Enregistre le handler WebSocket
+    http.HandleFunc("/ws", handleWebSocket)
 
-	// Adresse configurée
-	addr := fmt.Sprintf("%s:%d", AppConfig.WebSocket.Address, AppConfig.WebSocket.Port)
+    // Adresse configurée
+    addr := fmt.Sprintf("%s:%d", AppConfig.WebSocket.Address, AppConfig.WebSocket.Port)
 
-
-	// Lance le serveur WebSocket dans une goroutine pour ne pas bloquer
-	go func() {
-		log.Println("🚀 Serveur WebSocket lancé sur le port 8080...")
-		if err := http.ListenAndServe(addr, nil); err != nil {
-			log.Fatalf("Erreur WebSocket: %v", err)
-		}
-	}()
-}
-
-func healthWebSocketHandler(w http.ResponseWriter, r *http.Request) {
-    conn, err := upgrader.Upgrade(w, r, nil)
-    if err != nil {
-        log.Println("Erreur d'upgrade WebSocket:", err)
-        return
-    }
-    defer conn.Close()
-
-    log.Println("Client WebSocket connecté")
-
-    for {
-        update := HealthUpdate{
-            IP:     "192.168.1.100",
-            Status: "OK", // tu peux simuler un changement ici
-        }
-
-        msg, _ := json.Marshal(update)
-        err := conn.WriteMessage(websocket.TextMessage, msg)
-        if err != nil {
-            log.Println("Erreur d'envoi:", err)
-            break
-        }
-
-        time.Sleep(5 * time.Second)
+    log.Printf("🚀 Serveur WebSocket lancé sur %s...", addr)
+    if err := http.ListenAndServe(addr, nil); err != nil {
+        log.Fatalf("Erreur WebSocket: %v", err)
     }
 }
+
+
+
