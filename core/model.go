@@ -60,7 +60,9 @@ type Threshold struct {
 }
 
 type AttemptResult struct {
-	LatencyMs      float64 `json:"latency_ms"`
-	JitterMs       float64 `json:"jitter_ms"`
-	ThroughputKbps float64 `json:"throughput_kbps"`
+    TestID         int64   `json:"test_id"`        
+    LatencyMs      float64 `json:"latency_ms"`
+    JitterMs       float64 `json:"jitter_ms"`
+    ThroughputKbps float64 `json:"throughput_kbps"`
 }
+

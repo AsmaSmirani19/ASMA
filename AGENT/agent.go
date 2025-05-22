@@ -186,7 +186,7 @@ func StartTest(db *sql.DB, testID int) (*PacketStats, *QoSMetrics, error) {
 	// Étape 6 : Boucle d'envoi jusqu'à la fin du test
 	testEnd := stats.StartTime.Add(duration)
 	for time.Now().Before(testEnd) {
-		err := handleSender(stats, qos, conn)
+		err := handleSender(stats, qos, conn, int64(testID))
 		if err != nil {
 			fmt.Printf("❌ Erreur handleSender: %v\n", err)
 			return nil, nil, fmt.Errorf("❌ Erreur handleSender: %v", err)
@@ -266,7 +266,7 @@ func GetLatestMetrics() *QoSMetrics {
 	return latestMetrics
 }
 
-func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error {
+func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, testID int64) error {
 	fmt.Println("🚀 handleSender : début")
 
 	destAddr := &net.UDPAddr{
@@ -357,7 +357,7 @@ func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn) error 
 	}
 	defer db.Close()
 
-	if err := core.SaveAttemptResult(db, latencyMs, jitterMs, throughputKbps); err != nil {
+	if err := core.SaveAttemptResult(db, testID, latencyMs, jitterMs, throughputKbps); err != nil {
 		log.Printf("❌ Erreur insertion BDD: %v", err)
 	}
 

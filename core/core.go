@@ -145,12 +145,12 @@ func ParsePGInterval(interval string) (time.Duration, error) {
 	return 0, fmt.Errorf("format interval invalide: %q", interval)
 }
 
-func SaveAttemptResult(db *sql.DB, latency, jitter, throughput float64) error {
-	query := `
-		INSERT INTO attempt_results (latency_ms, jitter_ms, throughput_kbps)
-		VALUES ($1, $2, $3)
-	`
-	_, err := db.Exec(query, latency, jitter, throughput)
-	return err
+func SaveAttemptResult(db *sql.DB, testID int64, latency, jitter, throughput float64) error {
+    query := `
+        INSERT INTO attempt_results (test_id, latency_ms, jitter_ms, throughput_kbps)
+        VALUES ($1, $2, $3, $4)
+    `
+    _, err := db.Exec(query, testID, latency, jitter, throughput)
+    return err
 }
 
