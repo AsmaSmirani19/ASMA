@@ -6,55 +6,22 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
-
 	"log"
+	"net"
+	"sync"
+	"time"
+
 
 	_ "github.com/lib/pq"
 
 	"mon-projet-go/testpb"
-
 	"mon-projet-go/core"
-	"net"
-
-	"sync"
-	"time"
-
+	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-type PacketStats struct {
-	SentPackets        int
-	ReceivedPackets    int
-	TotalBytesSent     int64
-	TotalBytesReceived int64
-	LastLatency        int64
-	StartTime          time.Time
-	LatencySamples     []int64
-	TargetAddress      string
-	TargetPort         int
-}
 
-type QoSMetrics struct {
-	PacketLossPercent float64
-	AvgLatencyMs      float64
-	AvgJitterMs       float64
-	AvgThroughputKbps float64
-	TotalJitter       int64
-}
-
-type TwampTestPacket struct {
-	SequenceNumber        uint32
-	Timestamp             uint64
-	ErrorEstimation       uint16
-	MBZ                   uint16
-	ReceptionTimestamp    uint64
-	SenderSequenceNumber  uint64
-	SenderTimestamp       uint64
-	SenderErrorEstimation uint16
-	SenderTTL             uint8
-	Padding               []byte
-}
 
 func SerializeTwampTestPacket(packet *TwampTestPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
@@ -147,18 +114,32 @@ func receivePacket(conn *net.UDPConn) ([]byte, error) {
 	return buffer[:n], nil
 }
 
-func StartTest(db *sql.DB, testID int) (*PacketStats, *QoSMetrics, error) {
-	// Étape 1 : Récupération complète de la configuration du test
+func StartTest(db *sql.DB, testID int, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
+	log.Printf("🚀 [Client] Lancement du test ID %d...", testID)
+
+	// Étape 1 : Récupération de la configuration
+	log.Println("📥 Étape 1 : Chargement de la configuration du test...")
 	config, err := core.LoadFullTestConfiguration(db, testID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("❌ Impossible de récupérer la config du test ID %d : %v", testID, err)
 	}
+	log.Printf("✅ Configuration chargée : %+v", config)
 
-	// Étape 2 : Utilisation de la durée et de l'intervalle
+	// Étape 2 : Marquer le test comme "en attente"
+	log.Println("📌 Étape 2 : Marquage du test comme en attente...")
+	if err := core.UpdateTestStatus(db, testID, true, false, false); err != nil {
+		log.Printf("⚠️ Erreur lors de la mise à jour du test en attente : %v", err)
+	}
+	if ws != nil {
+		log.Println("📤 Envoi du statut 'pending' via WebSocket...")
+		sendTestStatus(ws, testID, "pending")
+	}
+
+	// Étape 3 : Initialisation
+	log.Println("⚙️ Étape 3 : Initialisation des structures de métriques...")
 	duration := config.Duration
 	interval := config.Profile.SendingInterval
 
-	// Étape 3 : Initialisation des stats et métriques
 	stats := &PacketStats{
 		StartTime:      time.Now(),
 		TargetAddress:  config.TargetIP,
@@ -167,37 +148,47 @@ func StartTest(db *sql.DB, testID int) (*PacketStats, *QoSMetrics, error) {
 	}
 	qos := &QoSMetrics{}
 
-	// Étape 4 : Création de l'adresse locale (source) pour bind
 	localAddr := &net.UDPAddr{
 		IP:   net.ParseIP(config.SourceIP),
 		Port: config.SourcePort,
 	}
 
-	// Étape 5 : Ouverture de la connexion UDP avec bind à la source
+	// Étape 4 : Création du socket UDP
+	log.Println("🔌 Étape 4 : Création du socket UDP...")
 	conn, err := net.ListenUDP("udp", localAddr)
 	if err != nil {
-		return nil, nil, fmt.Errorf("❌ Échec ouverture socket UDP (bind %s:%d) : %v",
+		return nil, nil, fmt.Errorf("❌ Échec de l'ouverture du socket UDP (%s:%d) : %v",
 			config.SourceIP, config.SourcePort, err)
 	}
 	defer conn.Close()
+	log.Printf("✅ Socket bindé sur %s:%d", config.SourceIP, config.SourcePort)
 
-	fmt.Printf("✅ Socket bindé sur %s:%d\n", config.SourceIP, config.SourcePort)
+	// Étape 5 : Exécution du test
+	log.Println("🚀 Étape 5 : Lancement de la boucle d'envoi des paquets...")
+	if ws != nil {
+		log.Println("📤 Envoi du statut 'running' via WebSocket...")
+		sendTestStatus(ws, testID, "running")
+	}
 
-	// Étape 6 : Boucle d'envoi jusqu'à la fin du test
 	testEnd := stats.StartTime.Add(duration)
 	for time.Now().Before(testEnd) {
-		err := handleSender(stats, qos, conn, int64(testID))
-		if err != nil {
-			fmt.Printf("❌ Erreur handleSender: %v\n", err)
-			return nil, nil, fmt.Errorf("❌ Erreur handleSender: %v", err)
+		if err := handleSender(stats, qos, conn, int64(testID)); err != nil {
+			log.Printf("❌ Erreur dans handleSender : %v", err)
+			_ = core.UpdateTestStatus(db, testID, false, true, false)
+			if ws != nil {
+				sendTestStatus(ws, testID, "failed")
+			}
+			return nil, nil, err
 		}
 		time.Sleep(interval)
 	}
 
-	// Étape 6 : Calcul des métriques
+	// Étape 6 : Calcul des métriques QoS
+	log.Println("📊 Étape 6 : Calcul des métriques QoS...")
 	if stats.SentPackets > 0 {
 		qos.PacketLossPercent = float64(stats.SentPackets-stats.ReceivedPackets) / float64(stats.SentPackets) * 100
 	}
+
 	if len(stats.LatencySamples) > 0 {
 		var totalLatency int64
 		for _, lat := range stats.LatencySamples {
@@ -205,6 +196,7 @@ func StartTest(db *sql.DB, testID int) (*PacketStats, *QoSMetrics, error) {
 		}
 		qos.AvgLatencyMs = float64(totalLatency) / float64(len(stats.LatencySamples)) / 1e6
 	}
+
 	if len(stats.LatencySamples) > 1 {
 		var totalJitter int64
 		for i := 1; i < len(stats.LatencySamples); i++ {
@@ -212,31 +204,31 @@ func StartTest(db *sql.DB, testID int) (*PacketStats, *QoSMetrics, error) {
 		}
 		qos.TotalJitter = totalJitter
 		qos.AvgJitterMs = float64(totalJitter) / float64(len(stats.LatencySamples)-1) / 1e6
-	} else {
-		qos.AvgJitterMs = 0
 	}
-	durationSec := duration.Seconds()
-	if durationSec >= 1.0 && stats.TotalBytesReceived > 0 {
-		qos.AvgThroughputKbps = float64(stats.TotalBytesReceived*8) / durationSec / 1000
+
+	if duration.Seconds() >= 1.0 && stats.TotalBytesReceived > 0 {
+		qos.AvgThroughputKbps = float64(stats.TotalBytesReceived*8) / duration.Seconds() / 1000
 	}
+
 	SetLatestMetrics(qos)
+	log.Printf("✅ Métriques calculées : %+v", qos)
+
+	// Étape 7 : Marquer le test comme terminé
+	log.Println("🏁 Étape 7 : Marquage du test comme terminé...")
+	if err := core.UpdateTestStatus(db, testID, false, false, true); err != nil {
+		log.Printf("⚠️ Erreur lors de la mise à jour du test terminé : %v", err)
+	}
+	if ws != nil {
+		log.Println("📤 Envoi du statut 'finished' via WebSocket...")
+		sendTestStatus(ws, testID, "finished")
+	}
+
+	log.Println("✅ Test terminé avec succès.")
 	return stats, qos, nil
 }
 
-type Threshold struct {
-	ID                  int
-	LatencyThreshold    float64
-	JitterThreshold     float64
-	PacketLossThreshold float64
-}
 
-// Struct pour les paramètres parsés
-type TestParams struct {
-	TargetIP       string
-	TargetPort     int
-	Duration       time.Duration
-	PacketInterval time.Duration
-}
+
 
 // Fonction utilitaire pour calculer la valeur absolue
 func abs(x int64) int64 {
@@ -439,11 +431,7 @@ func listenAsReflector() {
 	}
 }
 
-type twampAgent struct {
-	testpb.UnimplementedTestServiceServer
-	mu                sync.Mutex
-	currentTestCancel context.CancelFunc
-}
+
 
 func startGRPCServer() {
 	lis, err := net.Listen("tcp", AppConfig.GRPC.Port)
@@ -505,6 +493,7 @@ func Start(db *sql.DB) {
 
 	// WebSocket QoS
 	go StartWebSocketAgent()
+
 
 	// Connexion au backend gRPC (client stream)
 	go startClientStream()

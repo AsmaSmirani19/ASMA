@@ -6,6 +6,17 @@ import (
 	
 )
 
+
+type HealthUpdate struct {
+	IP     string `json:"ip"`
+	Status string `json:"status"` // OK or FAIL
+}
+
+type TestStatus struct {
+	TestID int    `json:"test_id"`
+	Status string `json:"status"` // "pending", "running", "finished", etc.
+}
+
 type QoSMetrics struct {
 	PacketLossPercent float64 `json:"packet_loss_percent"`
 	AvgLatencyMs      int64   `json:"avg_latency_ms"`
@@ -14,6 +25,12 @@ type QoSMetrics struct {
 	TotalJitter       int64   `json:"total_jitter"`
 }
 
+type AttemptResult struct {
+    TestID         int64   `json:"test_id"`        
+    LatencyMs      float64 `json:"latency_ms"`
+    JitterMs       float64 `json:"jitter_ms"`
+    ThroughputKbps float64 `json:"throughput_kbps"`
+}
 
 type TestConfig struct {
 	TestID         int    `json:"test_id"`
@@ -41,24 +58,23 @@ type AgentHealthCheck struct {
     Status    string    `db:"status"`
 }
 
-
-
 type PlannedTest struct {
-	ID             int       `json:"id"`
-	TestName       string    `json:"test_name"`
-	TestDuration   string    `json:"test_duration"`   
-	NumberOfAgents int       `json:"number_of_agents"`
-	CreationDate   time.Time `json:"creation_date"`  
+	ID              int
+	TestName        string
+	TestDuration    string
+	NumberOfAgents  int
+	CreationDate    time.Time
+	TestType        string
+	SourceID        int
+	TargetID        int
+	ProfileID       int
+	ThresholdID     int
+	InProgress      bool  // renommé depuis Waiting
+	Failed          bool
+	Completed       bool
+	Error           bool  // <- AJOUTÉ
+}
 
-	TestType     string       `json:"test_type"`          
-	SourceID     int          `json:"source_id"`      
-	TargetID     int          `json:"target_id"`      
-	ProfileID    int          `json:"profile_id"`     
-	ThresholdID  int          `json:"threshold_id"`   
-	Waiting      bool         `json:"waiting"`        
-	Failed       bool         `json:"failed"`         
-	Completed    bool          `json:"completed"`	
-}	
 
 type agentGroup struct {
 	ID             int               `json:"id"`
@@ -120,6 +136,31 @@ type TestConfigWithAgents struct {
 	ProfileID      int
 	ThresholdID    int
 }
+
+type DisplayedTest struct {
+	TestName      string    `json:"test_name"`
+	TestType      string    `json:"test_type"`
+	CreationDate  time.Time `json:"creation_date"`
+	TestDuration  string    `json:"test_duration"`
+	SourceAgent   string    `json:"source_agent"`
+	TargetAgent   string    `json:"target_agent"`
+	 
+	Min           float64   `json:"min"`
+	Max           float64   `json:"max"`
+	Avg           float64   `json:"avg"`
+	ThresholdName string    `json:"threshold_name"`
+	ThresholdValue float64  `json:"threshold_value"`
+
+	Status        string    `json:"status"`
+	InProgress    bool      `json:"in_progress"`
+	Completed     bool      `json:"completed"`
+	Failed        bool      `json:"failed"`
+	Error         bool      `json:"error"`
+
+
+}
+
+
 
 
 

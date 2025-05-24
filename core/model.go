@@ -36,7 +36,13 @@ type FullTestConfiguration struct {
 	ThresholdID    int
 	Profile        *Profile
 	Threshold      *Threshold
+
+	Waiting   bool
+	Failed    bool
+	Completed bool
+
 }
+
 
 type Profile struct {
 	ID              int
@@ -64,5 +70,22 @@ type AttemptResult struct {
     LatencyMs      float64 `json:"latency_ms"`
     JitterMs       float64 `json:"jitter_ms"`
     ThroughputKbps float64 `json:"throughput_kbps"`
+}
+
+type PlannedTest struct {
+	ID             int       `json:"id"`
+	TestName       string    `json:"test_name"`
+	TestDuration   string    `json:"test_duration"`   
+	NumberOfAgents int       `json:"number_of_agents"`
+	CreationDate   time.Time `json:"creation_date"`  
+
+	TestType     string       `json:"test_type"`          
+	SourceID     int          `json:"source_id"`      
+	TargetID     int          `json:"target_id"`      
+	ProfileID    int          `json:"profile_id"`     
+	ThresholdID  int          `json:"threshold_id"`   
+	Waiting      bool         `json:"waiting"`        
+	Failed       bool         `json:"failed"`         
+	Completed    bool          `json:"completed"`	
 }
 

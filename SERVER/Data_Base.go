@@ -348,23 +348,25 @@ func saveTestToDB(db *sql.DB, test PlannedTest) error {
 			"target_id",
 			"profile_id",
 			"threshold_id",
-			"waiting",
+			"In_progress",
 			"failed",
-			"completed"
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			"completed",
+			"Error"
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`,
 		test.TestName,       // $1
 		test.TestDuration,   // $2
 		test.NumberOfAgents, // $3
 		test.CreationDate,   // $4
-		test.TestType,
-		test.SourceID,
-		test.TargetID,
-		test.ProfileID,
-		test.ThresholdID,
-		test.Waiting,
-		test.Failed,
-		test.Completed,
+		test.TestType,       // $5
+		test.SourceID,       // $6
+		test.TargetID,       // $7
+		test.ProfileID,      // $8
+		test.ThresholdID,    // $9
+		test.InProgress,     // $10
+		test.Failed,         // $11
+		test.Completed,      // $12
+		test.Error,          // $13
 	)
 
 	if err != nil {
@@ -378,26 +380,28 @@ func saveTestToDB(db *sql.DB, test PlannedTest) error {
 func getTestsFromDB(db *sql.DB) ([]PlannedTest, error) {
 	rows, err := db.Query(`
 		SELECT 
-            "Id", 
-            "test_name", 
-            "test_duration", 
-            "number_of_agents", 
-            "creation_date", 
-            "test_type",
-            "source_id",
-            "target_id",
-            "profile_id",
-            "threshold_id",
-            "waiting",
-            "failed",
-            "completed"
-        FROM "test"
-    `)
+			"Id", 
+			"test_name", 
+			"test_duration", 
+			"number_of_agents", 
+			"creation_date", 
+			"test_type",
+			"source_id",
+			"target_id",
+			"profile_id",
+			"threshold_id",
+			"In_progress",
+			"failed",
+			"completed",
+			"Error"
+		FROM "test"
+	`)
 	if err != nil {
 		log.Printf("Erreur lors de la récupération des tests planifiés : %v\n", err)
 		return nil, err
 	}
 	defer rows.Close()
+
 	var tests []PlannedTest
 	for rows.Next() {
 		var t PlannedTest
@@ -412,9 +416,10 @@ func getTestsFromDB(db *sql.DB) ([]PlannedTest, error) {
 			&t.TargetID,
 			&t.ProfileID,
 			&t.ThresholdID,
-			&t.Waiting,
+			&t.InProgress,  // anciennement Waiting
 			&t.Failed,
 			&t.Completed,
+			&t.Error,       // <- AJOUTÉ
 		)
 		if err != nil {
 			log.Printf("Erreur lors de la lecture des données du test : %v\n", err)
@@ -445,21 +450,22 @@ func updateTestInDB(db *sql.DB, test PlannedTest) error {
 			"target_id" = $7,           
 			"profile_id" = $8,          
 			"threshold_id" = $9,       
-			"waiting" = $10,           
+			"In_progress" = $10,           
 			"failed" = $11,           
-			"completed" = $12           
-		WHERE "Id" = $13             
+			"completed" = $12,
+			"Error" = $13
+		WHERE "Id" = $14             
 	`,
 		test.TestName, test.TestDuration, test.NumberOfAgents, test.CreationDate,
 		test.TestType, test.SourceID, test.TargetID, test.ProfileID,
-		test.ThresholdID, test.Waiting, test.Failed, test.Completed, test.ID,
+		test.ThresholdID, test.InProgress, test.Failed, test.Completed, test.Error, test.ID,
 	)
 
 	if err != nil {
-		log.Printf("Erreur lors de la mise à jour du test planifié avec ID %d : %v\n", test.ID, err)
+		log.Printf("❌ Erreur lors de la mise à jour du test planifié avec ID %d : %v\n", test.ID, err)
 		return err
 	}
-	log.Printf("Test planifié avec ID %d mis à jour avec succès.\n", test.ID)
+	log.Printf("✅ Test planifié avec ID %d mis à jour avec succès.\n", test.ID)
 	return nil
 }
 
@@ -715,7 +721,6 @@ func deleteThresholdFromDB(db *sql.DB, thresholdID int64) error {
 	return nil
 }
 
-
 func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
 	query := `
 		SELECT 
@@ -760,8 +765,82 @@ func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
 	return &config, nil
 }
 
+func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
+	query := `
+	SELECT 
+		t.test_name,
+		t.test_type,
+		t.creation_date,
+		t.test_duration::text,
+		sa."Name" AS source_agent,
+		ta."Name" AS target_agent,
+		th."Name" AS threshold_name,
+		CASE
+			WHEN th."avg_status" THEN th."avg"
+			WHEN th."min_status" THEN th."min"
+			WHEN th."max_status" THEN th."max"
+			ELSE NULL
+		END AS threshold_value,
+		t."In_progress",
+		t."completed",
+		t."failed",
+		t."Error"
+	FROM test t
+	JOIN "Agent_List" sa ON t.source_id = sa.id
+	JOIN "Agent_List" ta ON t.target_id = ta.id
+	LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
+`
 
 
+	log.Println("Exécution de la requête SQL pour charger les tests...")
+	rows, err := db.Query(query)
+	if err != nil {
+		log.Printf("❌ Erreur requête SQL : %v", err)
+		return nil, fmt.Errorf("échec requête : %v", err)
+	}
+	defer rows.Close()
 
+	var results []DisplayedTest
 
+	for rows.Next() {
+		var test DisplayedTest
+		err := rows.Scan(
+			&test.TestName,
+			&test.TestType,
+			&test.CreationDate,
+			&test.TestDuration,
+			&test.SourceAgent,
+			&test.TargetAgent,
+			&test.ThresholdName,
+			&test.ThresholdValue,
+			&test.InProgress,
+			&test.Completed,
+			&test.Failed,
+			&test.Error,
+		)
 
+		if err != nil {
+			log.Printf("❌ Erreur lecture ligne (Scan) : %v", err)
+			return nil, fmt.Errorf("échec lecture ligne : %v", err)
+		}
+
+		switch {
+		case test.InProgress:
+			test.Status = "in_progress"
+		case test.Completed:
+			test.Status = "completed"
+		case test.Failed:
+			test.Status = "failed"
+		case test.Error:
+			test.Status = "error"
+		default:
+			test.Status = "unknown"
+		}
+
+		log.Printf("✅ Test chargé : %+v", test)
+		results = append(results, test)
+	}
+
+	log.Printf("✅ %d tests chargés avec succès.", len(results))
+	return results, nil
+}

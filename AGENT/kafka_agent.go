@@ -10,34 +10,9 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// Structures
-
-type TestRequest struct {
-	TestID int `json:"test_id"`
-}
-
-type PlannedTest struct {
-	ID             int            `json:"id"`
-	TestName       string         `json:"test_name"`
-	TestDuration   string         `json:"test_duration"`         
-	NumberOfAgents  int           `json:"number_of_agents"`
-	CreationDate   time.Time      `json:"creation_date"`
-	TestType        string        `json:"test_type"`
-	SourceID          int         `json:"source_id"`
-	TargetID          int         `json:"target_id"`
-	ProfileID         int         `json:"profile_id"`
-	ThresholdID       int         `json:"threshold_id"`
-	Waiting           bool        `json:"waiting"`
-	Failed            bool        `json:"failed"`
-	Completed         bool        `json:"completed"`
-}
 
 
-type KafkaConfig struct {
-	Brokers          []string
-	TestRequestTopic string
-	GroupID          string
-}
+
 
 type TestHandler func(config TestConfig)
 func ListenToTestRequestsFromKafka(db *sql.DB, handler func(TestConfig)) {

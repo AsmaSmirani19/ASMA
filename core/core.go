@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	_ "github.com/lib/pq" 
+	"log"
+
+	_ "github.com/lib/pq"
 )
 
 func InitDB() (*sql.DB, error) {
@@ -26,7 +28,10 @@ func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, 
 			ta."Address" AS target_ip,
 			ta."Port" AS target_port,
 			t.profile_id,
-			t.threshold_id
+			t.threshold_id,
+			t.waiting,
+			t.failed,
+			t.completed
 		FROM test t
 		JOIN "Agent_List" sa ON t.source_id = sa.id
 		JOIN "Agent_List" ta ON t.target_id = ta.id
@@ -47,6 +52,9 @@ func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, 
 		&config.TargetPort,
 		&config.ProfileID,
 		&config.ThresholdID,
+		&config.Waiting,
+		&config.Failed,
+		&config.Completed,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("erreur récupération test: %v", err)
@@ -146,11 +154,34 @@ func ParsePGInterval(interval string) (time.Duration, error) {
 }
 
 func SaveAttemptResult(db *sql.DB, testID int64, latency, jitter, throughput float64) error {
-    query := `
+	query := `
         INSERT INTO attempt_results (test_id, latency_ms, jitter_ms, throughput_kbps)
         VALUES ($1, $2, $3, $4)
     `
-    _, err := db.Exec(query, testID, latency, jitter, throughput)
-    return err
+	_, err := db.Exec(query, testID, latency, jitter, throughput)
+	return err
 }
 
+
+
+func UpdateTestStatus(db *sql.DB, testID int, waiting, failed, completed bool) error {
+	result, err := db.Exec(`
+		UPDATE test
+		SET waiting = $1, failed = $2, completed = $3
+		WHERE "Id" = $4
+	`, waiting, failed, completed, testID)
+	if err != nil {
+		return fmt.Errorf("❌ Erreur mise à jour statut test %d : %v", testID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("⚠️ Impossible de récupérer les lignes affectées : %v", err)
+	}
+	if rowsAffected == 0 {
+		log.Printf("⚠️ Aucun test avec ID %d trouvé pour mise à jour", testID)
+	} else {
+		log.Printf("✅ Statut mis à jour pour test %d → waiting=%v, failed=%v, completed=%v", testID, waiting, failed, completed)
+	}
+	return nil
+}

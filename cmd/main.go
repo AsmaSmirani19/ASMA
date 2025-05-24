@@ -4,10 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	
+	"mon-projet-go/server"
+
+
 	"mon-projet-go/agent"
 	"mon-projet-go/core"
 
-	"mon-projet-go/server"
+
 
 	_ "github.com/lib/pq"
 )
@@ -51,6 +55,7 @@ func main() {
 
 		// Appel direct avec TestID et DB
 		server.Client(config.TestID, db)
+	
 	}
 
 	log.Println("✅ Démarrage de l’écoute Kafka...")

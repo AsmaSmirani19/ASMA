@@ -1,19 +1,19 @@
 package server
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"io"
-	"bytes"
 
-	_ "github.com/lib/pq" 
+	_ "github.com/lib/pq"
 )
 
 // Structure représentant un test
@@ -23,6 +23,11 @@ type Test struct {
 	StartTime  time.Time `json:"start_time"`
 	EndTime    time.Time `json:"end_time"`
 	TestResult string    `json:"test_result"`
+}
+
+func InitDB() (*sql.DB, error) {
+	connStr := "host=localhost port=5432 user=postgres password=admin dbname=QoS_Results sslmode=disable"
+	return sql.Open("postgres", connStr)
 }
 
 func enableCORS(w http.ResponseWriter, r *http.Request) {
@@ -38,44 +43,44 @@ func enableCORS(w http.ResponseWriter, r *http.Request) {
 }
 
 type AgentService struct {
-    db *sql.DB
+	db *sql.DB
 }
 
 func (s *AgentService) CheckAllAgents() {
-    // 1. Récupérer tous les agents
-    rows, err := s.db.Query(`SELECT id, "Name", "Address" FROM "Agent_List"`)
-    if err != nil {
-        log.Fatalf("Erreur récupération agents: %v", err)
-    }
-    defer rows.Close()
+	// 1. Récupérer tous les agents
+	rows, err := s.db.Query(`SELECT id, "Name", "Address" FROM "Agent_List"`)
+	if err != nil {
+		log.Fatalf("Erreur récupération agents: %v", err)
+	}
+	defer rows.Close()
 
-    for rows.Next() {
-        var agent Agent // ← utiliser ta struct complète
+	for rows.Next() {
+		var agent Agent // ← utiliser ta struct complète
 
-        // 2. Récupération des données
-        if err := rows.Scan(&agent.ID, &agent.Name, &agent.Address); err != nil {
-            log.Printf("Erreur scan agent: %v", err)
-            continue
-        }
+		// 2. Récupération des données
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Address); err != nil {
+			log.Printf("Erreur scan agent: %v", err)
+			continue
+		}
 
-        // 3. Vérification santé via gRPC
-        healthy, msg := CheckAgentHealthGRPC(agent.Address)
-        agent.TestHealth = healthy
+		// 3. Vérification santé via gRPC
+		healthy, msg := CheckAgentHealthGRPC(agent.Address)
+		agent.TestHealth = healthy
 
-        // 4. Mise à jour en base
-        _, err := s.db.Exec(`UPDATE "Agent_List" SET "Test_health" = $1 WHERE "id" = $2`, agent.TestHealth, agent.ID)
-        if err != nil {
-            log.Printf("Erreur mise à jour test_health pour l'agent %d: %v", agent.ID, err)
-        }
+		// 4. Mise à jour en base
+		_, err := s.db.Exec(`UPDATE "Agent_List" SET "Test_health" = $1 WHERE "id" = $2`, agent.TestHealth, agent.ID)
+		if err != nil {
+			log.Printf("Erreur mise à jour test_health pour l'agent %d: %v", agent.ID, err)
+		}
 
-        // 5. Affichage console
-        status := "❌"
-        if healthy {
-            status = "✅"
-        }
-        fmt.Printf("%s Agent %d (%s @ %s): %s\n", 
-            status, agent.ID, agent.Name, agent.Address, msg)
-    }
+		// 5. Affichage console
+		status := "❌"
+		if healthy {
+			status = "✅"
+		}
+		fmt.Printf("%s Agent %d (%s @ %s): %s\n",
+			status, agent.ID, agent.Name, agent.Address, msg)
+	}
 }
 
 var tests = []Test{}
@@ -83,71 +88,70 @@ var mu sync.Mutex
 
 // Route POST pour démarrer un test
 func triggerTestHandler(db *sql.DB) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        enableCORS(w, r)
-        
-        // Debug log
-        log.Printf("📥 Requête reçue sur /api/trigger-test - Méthode: %s", r.Method)
+	return func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w, r)
 
-        if r.Method == "OPTIONS" {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
+		// Debug log
+		log.Printf("📥 Requête reçue sur /api/trigger-test - Méthode: %s", r.Method)
 
-        var req struct {
-            TestID int `json:"test_id"`
-            ID     int `json:"id"`
-        }
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 
-        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-            log.Printf("❌ Erreur décodage JSON: %v", err)
-            http.Error(w, "Format de requête invalide", http.StatusBadRequest)
-            return
-        }
+		var req struct {
+			TestID int `json:"test_id"`
+			ID     int `json:"id"`
+		}
 
-        effectiveID := req.TestID
-        if effectiveID == 0 {
-            effectiveID = req.ID
-        }
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("❌ Erreur décodage JSON: %v", err)
+			http.Error(w, "Format de requête invalide", http.StatusBadRequest)
+			return
+		}
 
-        if effectiveID == 0 {
-            log.Println("⚠️ Aucun ID de test fourni")
-            http.Error(w, "ID de test requis", http.StatusBadRequest)
-            return
-        }
+		effectiveID := req.TestID
+		if effectiveID == 0 {
+			effectiveID = req.ID
+		}
 
-        log.Printf("🔍 Recherche config pour test ID: %d", effectiveID)
-        testConfig, err := GetTestConfig(db, effectiveID)
-        if err != nil {
-            log.Printf("❌ Erreur GetTestConfig: %v", err)
-            http.Error(w, "Configuration de test introuvable", http.StatusNotFound)
-            return
-        }
+		if effectiveID == 0 {
+			log.Println("⚠️ Aucun ID de test fourni")
+			http.Error(w, "ID de test requis", http.StatusBadRequest)
+			return
+		}
 
-        configJSON, err := json.Marshal(testConfig)
-        if err != nil {
-            log.Printf("❌ Erreur sérialisation JSON: %v", err)
-            http.Error(w, "Erreur interne", http.StatusInternalServerError)
-            return
-        }
+		log.Printf("🔍 Recherche config pour test ID: %d", effectiveID)
+		testConfig, err := GetTestConfig(db, effectiveID)
+		if err != nil {
+			log.Printf("❌ Erreur GetTestConfig: %v", err)
+			http.Error(w, "Configuration de test introuvable", http.StatusNotFound)
+			return
+		}
 
-        log.Printf("📤 Envoi à Kafka - Topic: %s", AppConfig.Kafka.TestRequestTopic)
-        if err := SendMessageToKafka(AppConfig.Kafka.Brokers, AppConfig.Kafka.TestRequestTopic, "test", string(configJSON)); err != nil {
-            log.Printf("❌ Erreur Kafka: %v", err)
-            http.Error(w, "Erreur lors de l'envoi au système de test", http.StatusInternalServerError)
-            return
-        }
+		configJSON, err := json.Marshal(testConfig)
+		if err != nil {
+			log.Printf("❌ Erreur sérialisation JSON: %v", err)
+			http.Error(w, "Erreur interne", http.StatusInternalServerError)
+			return
+		}
 
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "status":  "success",
-            "message": "Test démarré avec succès",
-            "test_id": effectiveID,
-        })
-        log.Printf("✅ Test %d démarré avec succès", effectiveID)
-    }
+		log.Printf("📤 Envoi à Kafka - Topic: %s", AppConfig.Kafka.TestRequestTopic)
+		if err := SendMessageToKafka(AppConfig.Kafka.Brokers, AppConfig.Kafka.TestRequestTopic, "test", string(configJSON)); err != nil {
+			log.Printf("❌ Erreur Kafka: %v", err)
+			http.Error(w, "Erreur lors de l'envoi au système de test", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "success",
+			"message": "Test démarré avec succès",
+			"test_id": effectiveID,
+		})
+		log.Printf("✅ Test %d démarré avec succès", effectiveID)
+	}
 }
-
 
 // Route GET pour récupérer les résultats des tests
 func getTestResults(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +192,7 @@ func handleAgents(db *sql.DB) http.HandlerFunc {
 			log.Printf("Données reçues pour l'agent: %+v\n", agent)
 
 			// Validation des données
-			if agent.Name == "" || agent.Address == ""  {
+			if agent.Name == "" || agent.Address == "" {
 				http.Error(w, "Données manquantes", http.StatusBadRequest)
 				return
 			}
@@ -272,19 +276,19 @@ func handleAgentLink(db *sql.DB) http.HandlerFunc {
 				GroupID  int   `json:"group_id"`
 				AgentIDs []int `json:"agent_ids"`
 			}
-		
+
 			log.Println("🔁 Requête POST reçue pour liaison agents")
-		
+
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				http.Error(w, "JSON invalide", http.StatusBadRequest)
 				return
 			}
-		
+
 			if len(payload.AgentIDs) == 0 {
 				http.Error(w, "Liste d'agents vide", http.StatusBadRequest)
 				return
 			}
-		
+
 			log.Printf("🔗 Liaison agents %v au groupe %d", payload.AgentIDs, payload.GroupID)
 			err := linkAgentsToGroup(db, payload.GroupID, payload.AgentIDs)
 			if err != nil {
@@ -292,16 +296,15 @@ func handleAgentLink(db *sql.DB) http.HandlerFunc {
 				http.Error(w, "Erreur lors de l'association des agents", http.StatusInternalServerError)
 				return
 			}
-		
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte(`{"message": "Agents liés avec succès"}`))		
+			w.Write([]byte(`{"message": "Agents liés avec succès"}`))
 		default:
 			http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		}
 	}
 }
-
 
 func handleAgentGroup(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -323,7 +326,7 @@ func handleAgentGroup(db *sql.DB) http.HandlerFunc {
 			log.Printf("📦 Groupe reçu : %+v\n", agentGroup)
 
 			// Sauvegarder le groupe d'agents dans la base de données
-			if err := saveAgentGroupToDB(db,&agentGroup); err != nil {
+			if err := saveAgentGroupToDB(db, &agentGroup); err != nil {
 				log.Printf("❌ Erreur lors de l'enregistrement du groupe : %v\n", err)
 				http.Error(w, "Erreur lors de l'enregistrement du groupe", http.StatusInternalServerError)
 				return
@@ -534,14 +537,12 @@ func handleTests(db *sql.DB) http.HandlerFunc {
 	}
 }
 
- func handleTestProfile(db *sql.DB) http.HandlerFunc {
+func handleTestProfile(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		switch r.Method {
 
-			
-
-				case http.MethodPost:
+		case http.MethodPost:
 			log.Println("🔍 Début du traitement de la méthode POST pour créer un test profile")
 
 			// 🔽 Ajoute ce bloc pour logguer le corps brut
@@ -558,7 +559,7 @@ func handleTests(db *sql.DB) http.HandlerFunc {
 
 			log.Printf("📦 Test profile reçu : %+v\n", profile)
 
-	// ...
+			// ...
 			if err := saveTestProfileToDB(db, profile); err != nil {
 				log.Printf("❌ Erreur lors de l'enregistrement du test profile : %v\n", err)
 				http.Error(w, "Erreur lors de l'enregistrement du test profile", http.StatusInternalServerError)
@@ -751,5 +752,33 @@ func handleThreshold(db *sql.DB) http.HandlerFunc {
 			log.Printf("❌ Méthode non autorisée : %s\n", r.Method)
 			http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		}
+	}
+}
+
+func handleGetAllTests(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
+		return
+	}
+
+	db, err := InitDB()
+	if err != nil {
+		log.Printf("Erreur connexion DB : %v", err)
+		http.Error(w, "Erreur de connexion à la base de données", http.StatusInternalServerError)
+		return
+	}
+	defer db.Close()
+
+	tests, err := LoadAllTestsSummary(db)
+	if err != nil {
+		log.Printf("Erreur LoadAllTestsSummary : %v", err)
+		http.Error(w, "Erreur lors de la récupération des tests", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(tests); err != nil {
+		log.Printf("Erreur JSON encode : %v", err)
+		http.Error(w, "Erreur encodage JSON", http.StatusInternalServerError)
 	}
 }

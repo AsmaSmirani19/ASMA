@@ -23,6 +23,8 @@ import (
 	"mon-projet-go/core"
 
 	"github.com/rs/cors"
+
+	"github.com/gorilla/websocket"
 )
 
 type TestResult struct {
@@ -311,7 +313,8 @@ func Client(testID int, db *sql.DB) {
 
 	// 5. Démarrer le test
 	log.Println("🚀 [Client] Lancement du test agent.StartTest...")
-	stats, qos, err := agent.StartTest(db, config.TestID)
+	var conn2 *websocket.Conn
+	stats, qos, err := agent.StartTest(db, config.TestID, conn2)
 	if err != nil {
 		log.Fatalf("❌ [Client] Erreur startTest : %v", err)
 	}
@@ -551,7 +554,11 @@ func Start(db *sql.DB) {
 	http.HandleFunc("/api/threshold", handleThreshold(db))
 	http.HandleFunc("/api/tests", handleTests(db))
 	http.HandleFunc("/api/trigger-test", triggerTestHandler(db))
+	//http.HandleFunc("/api/test-results", handleTestResults(db))
+
 	//http.HandleFunc("/ws/health", healthWebSocketHandler)
+	http.HandleFunc("/api/test-results", handleGetAllTests)
+
 
 	// 🌍 5. Middleware CORS
 	c := cors.New(cors.Options{
