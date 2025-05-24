@@ -59,20 +59,20 @@ type AgentHealthCheck struct {
 }
 
 type PlannedTest struct {
-	ID              int
-	TestName        string
-	TestDuration    string
-	NumberOfAgents  int
-	CreationDate    time.Time
-	TestType        string
-	SourceID        int
-	TargetID        int
-	ProfileID       int
-	ThresholdID     int
-	InProgress      bool  // renommé depuis Waiting
-	Failed          bool
-	Completed       bool
-	Error           bool  // <- AJOUTÉ
+	ID             int       `json:"id"`
+	TestName       string    `json:"test_name"`
+	TestDuration   string    `json:"test_duration"`
+	NumberOfAgents int       `json:"number_of_agents"`
+	CreationDate   time.Time `json:"creation_date"`
+	TestType       string    `json:"test_type"`
+	SourceID       int       `json:"source_id"`
+	TargetID       int       `json:"target_id"`
+	ProfileID      int       `json:"profile_id"`
+	ThresholdID    int       `json:"threshold_id"`
+	InProgress     bool      `json:"inProgress"` 
+	Failed         bool      `json:"failed"`
+	Completed      bool      `json:"completed"`
+	Error          bool      `json:"error"`
 }
 
 
@@ -170,19 +170,3 @@ type TestDetails struct {
     ThresholdName  string  `json:"thresholdName"`
     ThresholdValue float64 `json:"thresholdValue"`
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

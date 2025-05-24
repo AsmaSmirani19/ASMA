@@ -895,6 +895,3 @@ func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
     }
     return &details, nil
 }
-
-
-
