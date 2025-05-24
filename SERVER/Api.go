@@ -782,3 +782,42 @@ func handleGetAllTests(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Erreur encodage JSON", http.StatusInternalServerError)
 	}
 }
+
+
+func handleGetTestByID(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
+        return
+    }
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/test-results/")
+	log.Printf("➡️ Requête pour l'ID : %s", idStr)
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		log.Printf("❌ ID invalide ou nul : '%s' (%d)", idStr, id)
+		http.Error(w, fmt.Sprintf("ID de test invalide : %d", id), http.StatusBadRequest)
+		return
+	}
+
+    db, err := InitDB()
+    if err != nil {
+        log.Println("❌ Connexion DB échouée")
+        http.Error(w, "Erreur de connexion à la base de données", http.StatusInternalServerError)
+        return
+    }
+    defer db.Close()
+
+    testDetails, err := GetTestDetailsByID(db, id)
+    if err != nil {
+        log.Printf("❌ Test non trouvé ou erreur SQL : %v", err)
+        http.Error(w, "Test non trouvé", http.StatusNotFound)
+        return
+    }
+
+    log.Printf("✅ Test trouvé : %+v", testDetails)
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(testDetails)
+}
+
+

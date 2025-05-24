@@ -768,6 +768,7 @@ func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
 func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	query := `
 	SELECT 
+	    t."Id",
 		t.test_name,
 		t.test_type,
 		t.creation_date,
@@ -791,7 +792,6 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
 `
 
-
 	log.Println("Exécution de la requête SQL pour charger les tests...")
 	rows, err := db.Query(query)
 	if err != nil {
@@ -805,6 +805,7 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	for rows.Next() {
 		var test DisplayedTest
 		err := rows.Scan(
+			&test.TestID, 
 			&test.TestName,
 			&test.TestType,
 			&test.CreationDate,
@@ -844,3 +845,56 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	log.Printf("✅ %d tests chargés avec succès.", len(results))
 	return results, nil
 }
+
+
+func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
+    query := `
+        SELECT
+            t."Id",
+            t.test_name,
+            CASE
+                WHEN t."In_progress" THEN 'in_progress'
+                WHEN t."completed" THEN 'completed'
+                WHEN t."failed" THEN 'failed'
+                WHEN t."Error" THEN 'error'
+                ELSE 'unknown'
+            END AS status,
+            t.creation_date,
+            t.test_duration,
+            sa."Name" AS source_agent,
+            ta."Name" AS target_agent,
+            th."Name" AS threshold_name,
+            CASE
+                WHEN th."avg_status" THEN th."avg"
+                WHEN th."min_status" THEN th."min"
+                WHEN th."max_status" THEN th."max"
+                ELSE NULL
+            END AS threshold_value
+        FROM test t
+        LEFT JOIN "Agent_List" sa ON t.source_id = sa.id
+        LEFT JOIN "Agent_List" ta ON t.target_id = ta.id
+        LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
+        WHERE t."Id" = $1
+    `
+
+    var details TestDetails
+    row := db.QueryRow(query, id)
+    err := row.Scan(
+        &details.TestID,
+        &details.TestName,
+        &details.Status,
+        &details.CreationDate,
+        &details.TestDuration,
+        &details.SourceAgent,
+        &details.TargetAgent,
+        &details.ThresholdName,
+        &details.ThresholdValue,
+    )
+    if err != nil {
+        return nil, err
+    }
+    return &details, nil
+}
+
+
+

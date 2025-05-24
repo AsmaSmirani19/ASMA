@@ -138,6 +138,7 @@ type TestConfigWithAgents struct {
 }
 
 type DisplayedTest struct {
+	TestID         int       `json:"test_id"`
 	TestName      string    `json:"test_name"`
 	TestType      string    `json:"test_type"`
 	CreationDate  time.Time `json:"creation_date"`
@@ -156,8 +157,18 @@ type DisplayedTest struct {
 	Completed     bool      `json:"completed"`
 	Failed        bool      `json:"failed"`
 	Error         bool      `json:"error"`
+}
 
-
+type TestDetails struct {
+    TestID         int     `json:"test_id"`
+    TestName       string  `json:"testName"`
+    Status         string  `json:"status"`
+    CreationDate   string  `json:"creationDate"`
+    TestDuration   string  `json:"testDuration"`
+    SourceAgent    string  `json:"sourceAgent"`
+    TargetAgent    string  `json:"targetAgent"`
+    ThresholdName  string  `json:"thresholdName"`
+    ThresholdValue float64 `json:"thresholdValue"`
 }
 
 

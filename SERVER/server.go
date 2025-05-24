@@ -557,7 +557,12 @@ func Start(db *sql.DB) {
 	//http.HandleFunc("/api/test-results", handleTestResults(db))
 
 	//http.HandleFunc("/ws/health", healthWebSocketHandler)
+
 	http.HandleFunc("/api/test-results", handleGetAllTests)
+
+	http.HandleFunc("/api/test-results/", handleGetTestByID)
+
+
 
 
 	// 🌍 5. Middleware CORS
