@@ -126,7 +126,7 @@ func StartTest(db *sql.DB, testID int, ws *websocket.Conn) (*PacketStats, *QoSMe
 
 	// Étape 2 : Marquer le test comme "en attente"
 	log.Println("📌 Étape 2 : Marquage du test comme en attente...")
-	if err := core.UpdateTestStatus(db, testID, true, false, false); err != nil {
+	if err := core.UpdateTestStatus(db, testID, true, false, false, false); err != nil {
 		log.Printf("⚠️ Erreur lors de la mise à jour du test en attente : %v", err)
 	}
 	if ws != nil {
@@ -173,7 +173,7 @@ func StartTest(db *sql.DB, testID int, ws *websocket.Conn) (*PacketStats, *QoSMe
 	for time.Now().Before(testEnd) {
 		if err := handleSender(stats, qos, conn, int64(testID)); err != nil {
 			log.Printf("❌ Erreur dans handleSender : %v", err)
-			_ = core.UpdateTestStatus(db, testID, false, true, false)
+			_ = core.UpdateTestStatus(db, testID, false, true, false ,true )
 			if ws != nil {
 				sendTestStatus(ws, testID, "failed")
 			}
@@ -214,7 +214,7 @@ func StartTest(db *sql.DB, testID int, ws *websocket.Conn) (*PacketStats, *QoSMe
 
 	// Étape 7 : Marquer le test comme terminé
 	log.Println("🏁 Étape 7 : Marquage du test comme terminé...")
-	if err := core.UpdateTestStatus(db, testID, false, false, true); err != nil {
+	if err := core.UpdateTestStatus(db, testID, false, false, true ,false); err != nil {
 		log.Printf("⚠️ Erreur lors de la mise à jour du test terminé : %v", err)
 	}
 	if ws != nil {
@@ -440,7 +440,7 @@ func Start(db *sql.DB) {
 	go listenAsReflector()
 
 	// Serveur gRPC pour Quick Tests
-	go startGRPCServer()
+	//go startGRPCServer()
 
 	// Attente du démarrage des services
 	time.Sleep(2 * time.Second)

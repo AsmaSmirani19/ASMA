@@ -10,10 +10,6 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-
-
-
-
 type TestHandler func(config TestConfig)
 func ListenToTestRequestsFromKafka(db *sql.DB, handler func(TestConfig)) {
 	// Configuration Kafka
@@ -92,9 +88,10 @@ func getPlannedTestByID(db *sql.DB, testID int) (PlannedTest, error) {
 			"target_id",
 			"profile_id",
 			"threshold_id",
-			"waiting",
+			"In_progress",
 			"failed",
-			"completed"
+			"completed",
+			"Error"
 		FROM "test"
 		WHERE "Id" = $1 AND "test_type" = 'planned_test'
 	`
@@ -109,9 +106,13 @@ func getPlannedTestByID(db *sql.DB, testID int) (PlannedTest, error) {
 		&t.TargetID,
 		&t.ProfileID,
 		&t.ThresholdID,
-		&t.Waiting,
+		&t.InProgress,
 		&t.Failed,
 		&t.Completed,
+		&t.Error,
 	)
 	return t, err
 }
+
+      
+	

@@ -38,7 +38,8 @@ func GetTestConfig(db *sql.DB, testID int) (*TestConfig, error) {
 	log.Printf("🔍 Recherche config pour test ID: %d", testID)
 
 	query := `SELECT 
-        "Id",            
+        "Id",      
+		test_type,          
         test_name, 
         test_duration, 
         number_of_agents,     
@@ -52,6 +53,7 @@ func GetTestConfig(db *sql.DB, testID int) (*TestConfig, error) {
 	var config TestConfig
 	err := db.QueryRow(query, testID).Scan(
 		&config.TestID,
+		&config.TestType,
 		&config.Name,
 		&config.Duration,
 		&config.NumberOfAgents,
@@ -226,6 +228,7 @@ func getAgentGroupsFromDB(db *sql.DB) ([]agentGroup, error) {
 	var groups []agentGroup
 	for rows.Next() {
 		var g agentGroup
+	
 		if err := rows.Scan(&g.ID, &g.GroupName, &g.CreationDate, &g.NumberOfAgents, &g.AgentIDs); err != nil {
 			log.Printf("❌ Erreur lecture ligne groupe : %v", err)
 			return nil, err
@@ -416,10 +419,10 @@ func getTestsFromDB(db *sql.DB) ([]PlannedTest, error) {
 			&t.TargetID,
 			&t.ProfileID,
 			&t.ThresholdID,
-			&t.InProgress,  // anciennement Waiting
+			&t.InProgress,  
 			&t.Failed,
 			&t.Completed,
-			&t.Error,       // <- AJOUTÉ
+			&t.Error,      
 		)
 		if err != nil {
 			log.Printf("Erreur lors de la lecture des données du test : %v\n", err)
@@ -721,6 +724,8 @@ func deleteThresholdFromDB(db *sql.DB, thresholdID int64) error {
 	return nil
 }
 
+
+// configuration totale du test
 func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
 	query := `
 		SELECT 
@@ -743,6 +748,7 @@ func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
 	`
 
 	var config TestConfigWithAgents
+
 	err := db.QueryRow(query, testID).Scan(
 		&config.TestID,
 		&config.Name,
@@ -765,6 +771,7 @@ func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
 	return &config, nil
 }
 
+// recharge tout les test 
 func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	query := `
 	SELECT 
@@ -791,7 +798,6 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	JOIN "Agent_List" ta ON t.target_id = ta.id
 	LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
 `
-
 	log.Println("Exécution de la requête SQL pour charger les tests...")
 	rows, err := db.Query(query)
 	if err != nil {
@@ -804,6 +810,7 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 
 	for rows.Next() {
 		var test DisplayedTest
+		log.Println("🧪 Tentative de Scan dans LoadAllTestsSummary")
 		err := rows.Scan(
 			&test.TestID, 
 			&test.TestName,
@@ -821,19 +828,19 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 		)
 
 		if err != nil {
-			log.Printf("❌ Erreur lecture ligne (Scan) : %v", err)
+			log.Printf("❌ Erreur lecture ligne (Scanload) : %v", err)
 			return nil, fmt.Errorf("échec lecture ligne : %v", err)
 		}
 
 		switch {
 		case test.InProgress:
-			test.Status = "in_progress"
+			test.Status = "In_progress"
 		case test.Completed:
 			test.Status = "completed"
 		case test.Failed:
 			test.Status = "failed"
 		case test.Error:
-			test.Status = "error"
+			test.Status = "Error"
 		default:
 			test.Status = "unknown"
 		}
@@ -880,15 +887,15 @@ func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
     var details TestDetails
     row := db.QueryRow(query, id)
     err := row.Scan(
-        &details.TestID,
-        &details.TestName,
-        &details.Status,
-        &details.CreationDate,
-        &details.TestDuration,
-        &details.SourceAgent,
-        &details.TargetAgent,
-        &details.ThresholdName,
-        &details.ThresholdValue,
+        &details.TestID,  //1
+        &details.TestName, //2
+        &details.Status, //3
+        &details.CreationDate, //4
+       &details.TestDuration, //5
+        &details.SourceAgent,//6
+        &details.TargetAgent, //7
+        &details.ThresholdName, //8
+        &details.ThresholdValue, //9 
     )
     if err != nil {
         return nil, err

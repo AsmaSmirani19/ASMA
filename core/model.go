@@ -37,9 +37,10 @@ type FullTestConfiguration struct {
 	Profile        *Profile
 	Threshold      *Threshold
 
-	Waiting   bool
-	Failed    bool
-	Completed bool
+	InProgress   bool
+	Failed       bool
+	Completed    bool
+	Error        bool
 
 }
 

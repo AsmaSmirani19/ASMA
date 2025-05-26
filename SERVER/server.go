@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
-	"google.golang.org/grpc"
+	
 
 	"mon-projet-go/agent"
 	"mon-projet-go/core"
@@ -435,46 +435,7 @@ func Serveur() {
 	}
 }
 
-// TestServiceServer
-type quickTestServer struct {
-	testpb.UnimplementedTestServiceServer
-}
 
-// Fonction qui lance un Quick Test
-func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
-	log.Println("Lancement du Quick Test sur le serveur...")
-
-	// Envoie d’une requête (commande de test)
-	testCmd := &testpb.QuickTestMessage{
-		Message: &testpb.QuickTestMessage_Request{
-			Request: &testpb.QuickTestRequest{
-				TestId:     "test_001",
-				Parameters: AppConfig.QuickTest.Parameters, // ← ici avec ":"
-			},
-		},
-	}
-
-	if err := stream.Send(testCmd); err != nil {
-		log.Printf("Erreur d'envoi de la commande: %v", err)
-		return err
-	}
-
-	// Attente de la réponse du client
-	for {
-		in, err := stream.Recv()
-		if err != nil {
-			log.Printf("Erreur lors de la réception: %v", err)
-			return err
-		}
-		// Vérifie si c'est une réponse
-		if res, ok := in.Message.(*testpb.QuickTestMessage_Response); ok {
-			log.Printf("Statut: %s, Résultat: %s", res.Response.Status, res.Response.Result)
-			break
-		}
-	}
-
-	return nil
-}
 
 func listenToTestResultsAndStore(db *sql.DB) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
@@ -516,26 +477,7 @@ func (s *healthServer) HealthCheck(ctx context.Context, req *testpb.HealthCheckR
 	return &testpb.HealthCheckResponse{Status: "OK"}, nil
 }
 
-// startGRPCServer démarre le serveur gRPC.
-func startGRPCServer() {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", AppConfig.GRPC.Port))
-	if err != nil {
-		log.Fatalf("Échec de l'écoute sur le port %d : %v", AppConfig.GRPC.Port, err)
-	}
 
-	grpcServer := grpc.NewServer()
-
-	// 1️⃣ Enregistrement du service QuickTest
-	testpb.RegisterTestServiceServer(grpcServer, &quickTestServer{})
-
-	// 2️⃣ Enregistrement du service HealthCheck
-	testpb.RegisterHealthServer(grpcServer, &healthServer{}) // <-- C'est ça qui manquait
-
-	log.Printf("✅ Serveur gRPC lancé sur le port %d...\n", AppConfig.GRPC.Port)
-	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Erreur lors du lancement du serveur gRPC : %v", err)
-	}
-}
 
 func Start(db *sql.DB) {
 

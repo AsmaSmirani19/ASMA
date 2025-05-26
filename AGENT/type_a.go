@@ -3,12 +3,8 @@ package agent
 
 import (
 	"time"
-	"context"
-	"sync"
-
-	"mon-projet-go/testpb"
+	
 )
-
 
 type TestStatus struct {
     TestID int    `json:"test_id"`
@@ -69,13 +65,8 @@ type QoSMetrics struct {
 	TotalJitter       int64
 }
 
-type twampAgent struct {
-	testpb.UnimplementedTestServiceServer
-	mu                sync.Mutex
-	currentTestCancel context.CancelFunc
-}
-
 type TestConfig struct {
+	TestType       string 
 	TestID         int    `json:"test_id"`
 	Name           string `json:"name"`
 	Duration       string `json:"duration"`
@@ -123,7 +114,8 @@ type PlannedTest struct {
 	TargetID          int         `json:"target_id"`
 	ProfileID         int         `json:"profile_id"`
 	ThresholdID       int         `json:"threshold_id"`
-	Waiting           bool        `json:"waiting"`
-	Failed            bool        `json:"failed"`
-	Completed         bool        `json:"completed"`
+	InProgress     bool      `json:"inProgress"` 
+	Failed         bool      `json:"failed"`
+	Completed      bool      `json:"completed"`
+	Error          bool      `json:"error"`
 }

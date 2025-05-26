@@ -4,18 +4,32 @@ package testpb;
 
 option go_package = "./testpb";
 
+// ===== Service principal pour les tests rapides =====
 service TestService {
   rpc PerformQuickTest(stream QuickTestMessage) returns (stream QuickTestMessage);
 }
 
+// ===== Message de configuration =====
+message TestParameters {
+  string source_ip = 1;
+  int32 source_port = 2;
+  string target_ip = 3;
+  int32 target_port = 4;
+  int32 duration_sec = 5;
+  int32 packet_size = 6;
+  int32 interval_millis = 7;
+}
+
+// ===== Messages pour les tests =====
 message QuickTestRequest {
   string test_id = 1;
-  string parameters = 2;
+  TestParameters parameters = 2;
 }
 
 message QuickTestResponse {
-  string status = 1;
-  string result = 2;
+  double latency_ms = 1;
+  double jitter_ms = 2;
+  double throughput_kbps = 3;
 }
 
 message QuickTestMessage {
@@ -25,8 +39,7 @@ message QuickTestMessage {
   }
 }
 
-// =>=>=> test_health <=<=<= //
-
+// ===== Health check =====
 service Health {
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
 }
@@ -35,11 +48,4 @@ message HealthCheckRequest {}
 
 message HealthCheckResponse {
   string status = 1; // "OK" ou "FAIL"
-}
-
-
-enum TestStatus {
-  UNKNOWN = 0;
-  COMPLETE = 1;
-  IN_PROGRESS = 2;
 }

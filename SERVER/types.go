@@ -33,15 +33,21 @@ type AttemptResult struct {
 }
 
 type TestConfig struct {
-	TestID         int    `json:"test_id"`
-	Name           string `json:"name"`
-	Duration       string   `json:"duration"`
-	NumberOfAgents int    `json:"number_of_agents"`
-	SourceID       int    `json:"source_id"`
-	TargetID       int    `json:"target_id"`
-	ProfileID      int    `json:"profile_id"`
-	ThresholdID    int    `json:"threshold_id"`
+    TestID         int    `json:"test_id"`
+    TestType       string `json:"test_type"`
+    Name           string `json:"name"`
+    Duration       string `json:"duration"`
+    NumberOfAgents int    `json:"number_of_agents"`
+    SourceID       int    `json:"source_id"`
+    SourceIP       string `json:"source_ip"`     // <- ajouté
+    SourcePort     int    `json:"source_port"`   // <- ajouté
+    TargetID       int    `json:"target_id"`
+    TargetIP       string `json:"target_ip"`     // optionnel selon besoin
+    TargetPort     int    `json:"target_port"`   // optionnel selon besoin
+    ProfileID      int    `json:"profile_id"`
+    ThresholdID    int    `json:"threshold_id"`
 }
+
 
 type Agent struct {
 	ID           int                 `json:"id"          db:"id"`
@@ -124,6 +130,7 @@ type Threshold struct {
 
 type TestConfigWithAgents struct {
 	TestID         int
+	TestType       string
 	Name           string
 	Duration       string
 	NumberOfAgents int
@@ -146,9 +153,9 @@ type DisplayedTest struct {
 	SourceAgent   string    `json:"source_agent"`
 	TargetAgent   string    `json:"target_agent"`
 	 
-	Min           float64   `json:"min"`
-	Max           float64   `json:"max"`
-	Avg           float64   `json:"avg"`
+	//Min           float64   `json:"min"`
+	//Max           float64   `json:"max"`
+	//Avg           float64   `json:"avg"`
 	ThresholdName string    `json:"threshold_name"`
 	ThresholdValue float64  `json:"threshold_value"`
 
@@ -158,6 +165,9 @@ type DisplayedTest struct {
 	Failed        bool      `json:"failed"`
 	Error         bool      `json:"error"`
 }
+		
+		
+			
 
 type TestDetails struct {
     TestID         int     `json:"test_id"`

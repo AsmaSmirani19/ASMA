@@ -4,7 +4,7 @@ package agent
 import (
 	"context"
 	"log"
-	"net"
+	
 
 	"mon-projet-go/testpb"
 	"google.golang.org/grpc"
@@ -12,21 +12,9 @@ import (
 )
 
 
-func startGRPCServer() {
-	lis, err := net.Listen("tcp", AppConfig.GRPC.Port)
-	if err != nil {
-		log.Fatalf("Échec d'écoute : %v", err)
-	}
 
-	grpcServer := grpc.NewServer()
-	testpb.RegisterTestServiceServer(grpcServer, &twampAgent{})
-
-	log.Println("Agent TWAMP (serveur gRPC) démarré sur le port 50052")
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("Échec du serveur gRPC : %v", err)
-	}
-}
-func startClientStream() {
+// *** etablit la cnx avec le serveur 
+ func startClientStream() {
 	conn, err := grpc.Dial(
 		AppConfig.Server.Main,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -51,6 +39,73 @@ func startClientStream() {
 		case <-stream.Context().Done():
 			log.Println("Connexion au serveur terminée")
 			return
+		}
+	}
+}
+
+
+type TestResults struct {
+	Latency    float64
+	Jitter     float64
+	Throughput float64
+}
+
+
+type twampAgent struct {
+	testpb.UnimplementedTestServiceServer
+
+	// Callback appelé pour lancer le test avec les paramètres reçus
+	TestCallback func(params *testpb.TestParameters) (TestResults, error)
+}
+ 
+func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
+	log.Println("🟢 Agent : connexion de test rapide reçue")
+
+	for {
+		in, err := stream.Recv()
+		if err != nil {
+			log.Printf("❌ Agent : erreur réception message : %v", err)
+			return err
+		}
+
+		switch msg := in.Message.(type) {
+		case *testpb.QuickTestMessage_Request:
+			cmd := msg.Request
+
+			log.Printf("📥 Commande de test reçue : test_id = %s", cmd.TestId)
+
+			if a.TestCallback == nil {
+				log.Println("⚠️ Aucun callback défini pour lancer le test")
+				return nil
+			}
+
+			// Appel au callback avec les paramètres reçus
+			results, err := a.TestCallback(cmd.Parameters)
+			if err != nil {
+				log.Printf("❌ Erreur exécution test client : %v", err)
+				return err
+			}
+
+			// Envoyer les résultats
+			err = stream.Send(&testpb.QuickTestMessage{
+				Message: &testpb.QuickTestMessage_Response{
+					Response: &testpb.QuickTestResponse{
+						LatencyMs:      results.Latency,
+						JitterMs:       results.Jitter,
+						ThroughputKbps: results.Throughput,
+					},
+				},
+			})
+			if err != nil {
+				log.Printf("❌ Erreur envoi résultats au serveur : %v", err)
+				return err
+			}
+
+			log.Println("✅ Résultats envoyés au serveur.")
+			// continue la boucle pour traiter d'autres commandes
+
+		default:
+			log.Println("⚠️ Type de message non reconnu")
 		}
 	}
 }

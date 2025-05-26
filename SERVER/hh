@@ -346,3 +346,21 @@ func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTest
 		}
 	}
 }
+
+
+
+
+func startGRPCServer() {
+	lis, err := net.Listen("tcp", AppConfig.GRPC.Port)
+	if err != nil {
+		log.Fatalf("Échec d'écoute : %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	testpb.RegisterTestServiceServer(grpcServer, &twampAgent{})
+
+	log.Println("Agent TWAMP (serveur gRPC) démarré sur le port 50052")
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("Échec du serveur gRPC : %v", err)
+	}
+}

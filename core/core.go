@@ -29,9 +29,10 @@ func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, 
 			ta."Port" AS target_port,
 			t.profile_id,
 			t.threshold_id,
-			t.waiting,
+			t."In_progress",
 			t.failed,
-			t.completed
+			t.completed,
+			t."Error"
 		FROM test t
 		JOIN "Agent_List" sa ON t.source_id = sa.id
 		JOIN "Agent_List" ta ON t.target_id = ta.id
@@ -52,9 +53,10 @@ func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, 
 		&config.TargetPort,
 		&config.ProfileID,
 		&config.ThresholdID,
-		&config.Waiting,
+		&config.InProgress,
 		&config.Failed,
 		&config.Completed,
+		&config.Error,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("erreur récupération test: %v", err)
@@ -162,14 +164,12 @@ func SaveAttemptResult(db *sql.DB, testID int64, latency, jitter, throughput flo
 	return err
 }
 
-
-
-func UpdateTestStatus(db *sql.DB, testID int, waiting, failed, completed bool) error {
+func UpdateTestStatus(db *sql.DB, testID int, inProgress, failed, completed, errorFlag bool) error {
 	result, err := db.Exec(`
 		UPDATE test
-		SET waiting = $1, failed = $2, completed = $3
-		WHERE "Id" = $4
-	`, waiting, failed, completed, testID)
+		SET "In_progress" = $1, "failed" = $2, "completed" = $3, "Error" = $4
+		WHERE "Id" = $5
+	`, inProgress, failed, completed, errorFlag, testID)
 	if err != nil {
 		return fmt.Errorf("❌ Erreur mise à jour statut test %d : %v", testID, err)
 	}
@@ -181,7 +181,7 @@ func UpdateTestStatus(db *sql.DB, testID int, waiting, failed, completed bool) e
 	if rowsAffected == 0 {
 		log.Printf("⚠️ Aucun test avec ID %d trouvé pour mise à jour", testID)
 	} else {
-		log.Printf("✅ Statut mis à jour pour test %d → waiting=%v, failed=%v, completed=%v", testID, waiting, failed, completed)
+		log.Printf("✅ Statut mis à jour pour test %d → In_progress=%v, failed=%v, completed=%v, Error=%v", testID, inProgress, failed, completed, errorFlag)
 	}
 	return nil
 }

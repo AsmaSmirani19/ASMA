@@ -6,8 +6,6 @@ import (
 	"log"
 	
 	"mon-projet-go/server"
-
-
 	"mon-projet-go/agent"
 	"mon-projet-go/core"
 
