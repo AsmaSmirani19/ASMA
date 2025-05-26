@@ -503,6 +503,9 @@ func Start(db *sql.DB) {
 	http.HandleFunc("/api/test-results", handleGetAllTests)
 	http.HandleFunc("/api/test-results/", handleGetTestByID)
 
+	http.HandleFunc("/api/planned-test", handlePlannedTest(db))
+
+
 	// 🌍 5. Middleware CORS
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"http://localhost:4200"},

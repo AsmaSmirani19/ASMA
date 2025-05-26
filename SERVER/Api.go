@@ -17,6 +17,7 @@ import (
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
 	"mon-projet-go/testpb"
+	
 )
 
 // Structure représentant un test
@@ -871,5 +872,46 @@ func handleGetTestByID(w http.ResponseWriter, r *http.Request) {
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(testDetails)
 }
+
+func handlePlannedTest(db *sql.DB) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        switch r.Method {
+        case http.MethodGet:
+            idStr := r.URL.Query().Get("id")
+            log.Printf("Requête GET /api/planned-test avec id=%s", idStr)
+            if idStr == "" {
+                log.Println("Erreur: ID du test requis mais absent")
+                http.Error(w, "L'ID du test est requis", http.StatusBadRequest)
+                return
+            }
+
+            id, err := strconv.Atoi(idStr)
+            if err != nil {
+                log.Printf("Erreur: ID non valide '%s': %v", idStr, err)
+                http.Error(w, "L'ID doit être un nombre valide", http.StatusBadRequest)
+                return
+            }
+
+            plannedTest, err := GetPlannedTestInfoByID(db, id)
+            if err != nil {
+                log.Printf("Erreur récupération test ID=%d: %v", id, err)
+                http.Error(w, "Test non trouvé", http.StatusNotFound)
+                return
+            }
+
+            log.Printf("Test trouvé : %+v", plannedTest)
+
+            w.Header().Set("Content-Type", "application/json")
+            if err := json.NewEncoder(w).Encode(plannedTest); err != nil {
+                log.Printf("Erreur encodage JSON : %v", err)
+            }
+
+        default:
+            log.Printf("Méthode non autorisée: %s", r.Method)
+            http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
+        }
+    }
+}
+
 
 
