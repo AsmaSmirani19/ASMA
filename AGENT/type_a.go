@@ -17,6 +17,8 @@ type WebSocketMessage struct {
 }
 
 type PacketStats struct {
+
+	TestID             int 
 	SentPackets        int
 	ReceivedPackets    int
 	TotalBytesSent     int64
@@ -42,11 +44,12 @@ type TwampTestPacket struct {
 	Padding               []byte
 }
 
-type Threshold struct {
-	ID                  int
-	LatencyThreshold    float64
-	JitterThreshold     float64
-	PacketLossThreshold float64
+
+ 
+type KafkaConfig struct {
+	Brokers          []string
+	TestRequestTopic string
+	GroupID          string
 }
 
 // Struct pour les paramètres parsés
@@ -65,17 +68,6 @@ type QoSMetrics struct {
 	TotalJitter       int64
 }
 
-type TestConfig struct {
-	TestType       string 
-	TestID         int    `json:"test_id"`
-	Name           string `json:"name"`
-	Duration       string `json:"duration"`
-	NumberOfAgents int    `json:"number_of_agents"`
-	SourceID       int    `json:"source_id"`
-	TargetID       int    `json:"target_id"`
-	ProfileID      int    `json:"profile_id"`
-	ThresholdID    int    `json:"threshold_id"`
-}
 
 
 type TestConfigWithAgents struct {
@@ -93,11 +85,7 @@ type TestConfigWithAgents struct {
 	ThresholdID    int
 }
 
-type KafkaConfig struct {
-	Brokers          []string
-	TestRequestTopic string
-	GroupID          string
-}
+
 
 type TestRequest struct {
 	TestID int `json:"test_id"`

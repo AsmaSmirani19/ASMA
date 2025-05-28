@@ -2,11 +2,15 @@ package server
 
 import (
 	"context"
-	
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
 
 	"github.com/segmentio/kafka-go"
 )
 
+// Envoie un message à Kafka
 func SendMessageToKafka(brokers []string, topic, key, value string) error {
 	writer := kafka.NewWriter(kafka.WriterConfig{
 		Brokers:  brokers,
@@ -22,4 +26,86 @@ func SendMessageToKafka(brokers []string, topic, key, value string) error {
 	return writer.WriteMessages(context.Background(), msg)
 }
 
+func TriggerTestToKafka(db *sql.DB, testID int) error {
+    // Charger la configuration complète du test depuis la BDD
+    config, err := LoadFullTestConfiguration(db, testID)
+    if err != nil {
+        return fmt.Errorf("❌ Erreur chargement config test : %v", err)
+    }
 
+    // Vérifier que le profil est bien chargé
+    if config.Profile == nil {
+        return fmt.Errorf("❌ Erreur : config.Profile est nil pour test %d", testID)
+    }
+
+    // Encoder la configuration en JSON
+    data, err := json.Marshal(config)
+    if err != nil {
+        return fmt.Errorf("❌ Erreur JSON config : %v", err)
+    }
+
+    // Créer une clé pour Kafka
+    key := fmt.Sprintf("test-%d", testID)
+
+    // Envoyer le message à Kafka
+    err = SendMessageToKafka([]string{"localhost:9092"}, "test-requests", key, string(data))
+    if err != nil {
+        return fmt.Errorf("❌ Erreur envoi Kafka : %v", err)
+    }
+
+    log.Printf("✅ Test %d envoyé à Kafka avec succès", testID)
+    return nil
+}
+
+
+type TestResult1 struct {
+    TestID         int     `json:"test_id"`
+    LatencyMs      float64 `json:"latency_ms"`
+    JitterMs       float64 `json:"jitter_ms"`
+    ThroughputKbps float64 `json:"throughput_kbps"`
+}
+
+// db est ta connexion globale ou passée en paramètre à la fonction
+var db *sql.DB
+
+func ConsumeTestResults(ctx context.Context, brokers []string, topic, groupID string) {
+    // Création d'un reader Kafka (consommateur)
+    r := kafka.NewReader(kafka.ReaderConfig{
+        Brokers:  brokers,
+        GroupID:  groupID,
+        Topic:    topic,
+        MinBytes: 10e3, // 10KB
+        MaxBytes: 10e6, // 10MB
+    })
+    defer r.Close()
+
+    log.Printf("👂 Démarrage de la consommation Kafka sur le topic %s", topic)
+
+    for {
+        m, err := r.ReadMessage(ctx)
+        if err != nil {
+            log.Printf("❌ Erreur lecture message Kafka : %v", err)
+            if ctx.Err() != nil {
+                // Contexte annulé, sortie propre
+                break
+            }
+            continue
+        }
+
+        log.Printf("📩 Message reçu - Partition:%d Offset:%d Key:%s", m.Partition, m.Offset, string(m.Key))
+
+        var result TestResult1
+        if err := json.Unmarshal(m.Value, &result); err != nil {
+            log.Printf("❌ Erreur désérialisation JSON : %v", err)
+            continue
+        }
+
+        // Sauvegarder en base
+       if err := SaveAttemptResult(db, int64(result.TestID), result.LatencyMs, result.JitterMs, result.ThroughputKbps); err != nil {
+   		 log.Printf("❌ Erreur sauvegarde en base : %v", err)
+		
+        } else {
+            log.Printf("✅ Résultat TestID %d sauvegardé en base", result.TestID)
+        }
+    }
+}

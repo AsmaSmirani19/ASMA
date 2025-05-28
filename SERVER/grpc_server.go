@@ -8,7 +8,6 @@ import (
 
 	"google.golang.org/grpc"
 
-	"mon-projet-go/core"
 	"mon-projet-go/testpb"
 )
 
@@ -60,7 +59,7 @@ func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTes
 	log.Printf("📥 Test ID reçu : %s", testID)
 
 	// 2️⃣ Charger la configuration de test
-	db, err := core.InitDB()
+	db, err := InitDB()
 	if err != nil {
 		return fmt.Errorf("❌ Connexion BDD échouée: %v", err)
 	}
@@ -71,7 +70,7 @@ func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTes
 		return fmt.Errorf("❌ Test ID invalide : %v", err)
 	}
 
-	config, err := core.LoadFullTestConfiguration(db, testIDInt)
+	config, err := LoadFullTestConfiguration(db, testIDInt)
 	if err != nil {
 		return fmt.Errorf("❌ Erreur chargement config test : %v", err)
 	}
@@ -112,13 +111,13 @@ func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTes
 				res.Response.LatencyMs, res.Response.JitterMs, res.Response.ThroughputKbps)
 
 			// 6️⃣ Sauvegarder les résultats
-			err := core.SaveAttemptResult(db, int64(testIDInt), res.Response.LatencyMs, res.Response.JitterMs, res.Response.ThroughputKbps)
+			err := SaveAttemptResult(db, int64(testIDInt), res.Response.LatencyMs, res.Response.JitterMs, res.Response.ThroughputKbps)
 			if err != nil {
 				log.Printf("⚠️ Erreur sauvegarde résultat : %v", err)
 			}
 
 			// 7️⃣ Mise à jour du statut
-			err = core.UpdateTestStatus(db, testIDInt, false, false, true, false )
+			err = UpdateTestStatus(db, testIDInt, false, false, true, false )
 			if err != nil {
 				log.Printf("⚠️ Erreur mise à jour statut : %v", err)
 			}

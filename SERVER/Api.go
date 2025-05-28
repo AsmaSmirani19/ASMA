@@ -122,13 +122,14 @@ func triggerTestHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		log.Printf("🔍 Recherche config pour test ID: %d", effectiveID)
-		testConfig, err := GetTestConfig(db, effectiveID)
+		testConfig, err := LoadFullTestConfiguration(db, effectiveID)
 		if err != nil {
 			log.Printf("❌ Erreur GetTestConfig: %v", err)
 			http.Error(w, "Configuration de test introuvable", http.StatusNotFound)
 			return
 		}
-
+		log.Printf("🧪 Type de test reçu depuis config : '%s'", testConfig.TestType)
+		
 		switch testConfig.TestType {
 		case "planned_test":
 			log.Println("📤 Envoi du test planned à Kafka")

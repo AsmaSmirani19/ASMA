@@ -9,6 +9,18 @@ import (
 )
 
 type Config struct {
+	Server struct {
+			Address  string `yaml:"address"`
+			Protocol string `yaml:"protocol"`
+			
+	} `yaml:"server"`
+
+			
+	Server1 struct {
+		Main string `yaml:"main"`
+	} `yaml:"server1"`
+
+
 	Sender struct {
 		ID   string `yaml:"id"`
 		IP   string `yaml:"ip"`
@@ -24,11 +36,11 @@ type Config struct {
 		Port string `yaml:"port"`
 	} `yaml:"grpc"`
 
-	Server struct {
-		Main string `yaml:"main"`
-	} `yaml:"server"`
-
 	Network struct {
+		ServerAddress string `yaml:"server_address"`
+		ServerPort    int    `yaml:"server_port"`
+		SenderPort    int    `yaml:"sender_port"`
+		ReceiverPort  int    `yaml:"receiver_port"`
 		ListenPort int           `yaml:"listen_port"`
 		PacketSize int           `yaml:"packet_size"`
 		Timeout    time.Duration `yaml:"timeout"`
@@ -52,6 +64,7 @@ type Config struct {
 		URL string `yaml:"url"`
 	} `yaml:"websocket"` 
 }
+
 
 var AppConfig Config
 

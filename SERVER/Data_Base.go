@@ -8,9 +8,19 @@ import (
 	"time"
 	"errors"
 	
+	
 	"github.com/lib/pq"
 )
 
+
+func SaveAttemptResult(db *sql.DB, testID int64, latency, jitter, throughput float64) error {
+	query := `
+        INSERT INTO attempt_results (test_id, latency_ms, jitter_ms, throughput_kbps)
+        VALUES ($1, $2, $3, $4)
+    `
+	_, err := db.Exec(query, testID, latency, jitter, throughput)
+	return err
+}
 func saveResultsToDB(db *sql.DB, qos QoSMetrics) error {
 	_, err := db.Exec(`
 		INSERT INTO qos_results (
@@ -34,42 +44,6 @@ func saveResultsToDB(db *sql.DB, qos QoSMetrics) error {
 	return err
 }
 
-func GetTestConfig(db *sql.DB, testID int) (*TestConfig, error) {
-	log.Printf("🔍 Recherche config pour test ID: %d", testID)
-
-	query := `SELECT 
-        "Id",      
-		test_type,          
-        test_name, 
-        test_duration, 
-        number_of_agents,     
-        source_id, 
-        target_id, 
-        profile_id, 
-        threshold_id
-        FROM test
-        WHERE "Id" = $1`
-
-	var config TestConfig
-	err := db.QueryRow(query, testID).Scan(
-		&config.TestID,
-		&config.TestType,
-		&config.Name,
-		&config.Duration,
-		&config.NumberOfAgents,
-		&config.SourceID,
-		&config.TargetID,
-		&config.ProfileID,
-		&config.ThresholdID,
-	)
-
-	if err != nil {
-		log.Printf("❌ Erreur DB: %v", err)
-		return nil, fmt.Errorf("erreur base de données: %v", err)
-	}
-
-	return &config, nil
-}
 
 // Agent_List
 func saveAgentToDB(db *sql.DB, agent *Agent) error {
@@ -725,52 +699,6 @@ func deleteThresholdFromDB(db *sql.DB, thresholdID int64) error {
 }
 
 
-// configuration totale du test
-func GetFullTestConfig(db *sql.DB, testID int) (*TestConfigWithAgents, error) {
-	query := `
-		SELECT 
-			t."Id",
-			t.test_name,
-			t.test_duration::text,  -- CAST de l'interval en texte
-			t.number_of_agents,
-			t.source_id,
-			sa."Address" AS source_ip,
-			sa."Port" AS source_port,
-			t.target_id,
-			ta."Address" AS target_ip,
-			ta."Port" AS target_port,
-			t.profile_id,
-			t.threshold_id
-		FROM test t
-		JOIN "Agent_List" sa ON t.source_id = sa.id
-		JOIN "Agent_List" ta ON t.target_id = ta.id
-		WHERE t."Id" = $1
-	`
-
-	var config TestConfigWithAgents
-
-	err := db.QueryRow(query, testID).Scan(
-		&config.TestID,
-		&config.Name,
-		&config.Duration,
-		&config.NumberOfAgents,
-		&config.SourceID,
-		&config.SourceIP,
-		&config.SourcePort,
-		&config.TargetID,
-		&config.TargetIP,
-		&config.TargetPort,
-		&config.ProfileID,
-		&config.ThresholdID,
-	)
-
-	if err != nil {
-		return nil, fmt.Errorf("erreur lors de la récupération de la configuration complète: %v", err)
-	}
-
-	return &config, nil
-}
-
 // recharge tout les test 
 func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	query := `
@@ -901,4 +829,154 @@ func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
         return nil, err
     }
     return &details, nil
+}
+ 
+////****************************************************
+func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, error) {
+    log.Printf("➡️ Début du chargement de la configuration complète du test ID=%d", testID)
+
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    query := `
+    SELECT 
+        t."Id",
+        t.test_name,
+        t.test_type,
+        t.test_duration::text,
+        t.number_of_agents,
+        t.source_id,
+        sa."Address" AS source_ip,
+        sa."Port" AS source_port,
+        t.target_id,
+        ta."Address" AS target_ip,
+        ta."Port" AS target_port,
+        t.profile_id,
+        t.threshold_id,
+        t."In_progress",
+        t.failed,
+        t.completed,
+        t."Error"
+    FROM test t
+    JOIN "Agent_List" sa ON t.source_id = sa.id
+    JOIN "Agent_List" ta ON t.target_id = ta.id
+    WHERE t."Id" = $1  
+    `
+
+    var config FullTestConfiguration
+    log.Printf("🔍 Exécution de la requête principale pour test ID=%d", testID)
+    err := db.QueryRowContext(ctx, query, testID).Scan(
+        &config.TestID,
+        &config.Name,
+        &config.TestType,
+        &config.RawDuration,
+        &config.NumberOfAgents,
+        &config.SourceID,
+        &config.SourceIP,
+        &config.SourcePort,
+        &config.TargetID,
+        &config.TargetIP,
+        &config.TargetPort,
+        &config.ProfileID,
+        &config.ThresholdID,
+        &config.InProgress,
+        &config.Failed,
+        &config.Completed,
+        &config.Error,
+    )
+    if err != nil {
+        log.Printf("❌ Erreur récupération test ID=%d : %v", testID, err)
+        return nil, fmt.Errorf("erreur récupération test: %w", err)
+    }
+
+    log.Printf("✅ Test ID=%d récupéré : profile_id=%d", config.TestID, config.ProfileID)
+    if config.ProfileID == 0 {
+        log.Printf("⚠️ ProfileID est 0, vérifier la base de données ou la requête")
+    }
+
+    config.Duration, err = ParsePGInterval(config.RawDuration)
+    if err != nil {
+        log.Printf("❌ Durée invalide pour test ID=%d : %v", testID, err)
+        return nil, fmt.Errorf("durée invalide: %w", err)
+    }
+    log.Printf("⏳ Durée du test ID=%d convertie : %v", testID, config.Duration)
+
+    // Chargement du profil lié
+    profileQuery := `
+        SELECT "ID", "profile_name", "packet_size", "time_between_attempts"
+        FROM "test_profile"
+        WHERE "ID" = $1
+    `
+    var p Profile
+    var rawInterval string
+    var profileName string
+
+    err = db.QueryRowContext(ctx, profileQuery, config.ProfileID).Scan(&p.ID, &profileName, &p.PacketSize, &rawInterval)
+    if err != nil {
+        log.Printf("❌ Profil introuvable pour ID=%d : %v", config.ProfileID, err)
+        return nil, fmt.Errorf("profil introuvable pour ID: %d, erreur: %w", config.ProfileID, err)
+    }
+    p.SendingInterval, err = ParsePGInterval(rawInterval)
+    if err != nil {
+        log.Printf("❌ Durée invalide pour profil ID=%d : %v", p.ID, err)
+        return nil, fmt.Errorf("durée invalide pour profil: %w", err)
+    }
+
+    log.Printf("✅ Profil chargé: ID=%d, Name=%s, PacketSize=%d, Interval=%v", p.ID, profileName, p.PacketSize, p.SendingInterval)
+    config.Profile = &p
+
+    // Chargement du seuil lié
+    thresholdQuery := `
+        SELECT "ID", "Name", "avg", "min", "max", "avg_status", "min_status", "avg_opr", "min_opr", "max_opr", "selected_metric"
+        FROM "Threshold"
+        WHERE "ID" = $1
+    `
+    var t Threshold
+    log.Printf("🔍 Requête du seuil ID=%d", config.ThresholdID)
+    err = db.QueryRowContext(ctx, thresholdQuery, config.ThresholdID).Scan(
+        &t.ID,
+        &t.Name,
+        &t.Avg,
+        &t.Min,
+        &t.Max,
+        &t.AvgStatus,
+        &t.MinStatus,
+        &t.AvgOpr,
+        &t.MinOpr,
+        &t.MaxOpr,
+        &t.SelectedMetric,
+    )
+    if err != nil {
+        log.Printf("❌ Seuil introuvable pour ID=%d : %v", config.ThresholdID, err)
+        return nil, fmt.Errorf("seuil introuvable pour ID: %d, erreur: %w", config.ThresholdID, err)
+    }
+    config.Threshold = &t
+    log.Printf("✅ Seuil chargé pour test ID=%d : %+v", testID, config.Threshold)
+
+    log.Printf("🎉 Configuration complète du test ID=%d chargée avec succès", testID)
+    return &config, nil
+}
+
+
+
+func UpdateTestStatus(db *sql.DB, testID int, inProgress, failed, completed, errorFlag bool) error {
+	result, err := db.Exec(`
+		UPDATE test
+		SET "In_progress" = $1, "failed" = $2, "completed" = $3, "Error" = $4
+		WHERE "Id" = $5
+	`, inProgress, failed, completed, errorFlag, testID)
+	if err != nil {
+		return fmt.Errorf("❌ Erreur mise à jour statut test %d : %v", testID, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("⚠️ Impossible de récupérer les lignes affectées : %v", err)
+	}
+	if rowsAffected == 0 {
+		log.Printf("⚠️ Aucun test avec ID %d trouvé pour mise à jour", testID)
+	} else {
+		log.Printf("✅ Statut mis à jour pour test %d → In_progress=%v, failed=%v, completed=%v, Error=%v", testID, inProgress, failed, completed, errorFlag)
+	}
+	return nil
 }

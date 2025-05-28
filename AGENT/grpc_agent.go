@@ -5,7 +5,6 @@ import (
 	"context"
 	"log"
 	
-
 	"mon-projet-go/testpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -16,7 +15,7 @@ import (
 // *** etablit la cnx avec le serveur 
  func startClientStream() {
 	conn, err := grpc.Dial(
-		AppConfig.Server.Main,
+		AppConfig.Server1.Main,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
 	)

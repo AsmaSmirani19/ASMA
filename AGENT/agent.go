@@ -1,84 +1,20 @@
 package agent
 
 import (
-	"bytes"
-	
 	"database/sql"
-	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
 	"sync"
 	"time"
+	"context"
+	"encoding/json"
+
 
 
 	_ "github.com/lib/pq"
-
-	
-	"mon-projet-go/core"
 	"github.com/gorilla/websocket"
-	
-
 )
-
-
-func SerializeTwampTestPacket(packet *TwampTestPacket) ([]byte, error) {
-	buf := new(bytes.Buffer)
-
-	fields := []interface{}{
-		packet.SequenceNumber,
-		packet.Timestamp,
-		packet.ErrorEstimation,
-		packet.MBZ,
-		packet.ReceptionTimestamp,
-		packet.SenderSequenceNumber,
-		packet.SenderTimestamp,
-		packet.SenderErrorEstimation,
-		packet.SenderTTL,
-		packet.Padding,
-	}
-	for _, field := range fields {
-		err := binary.Write(buf, binary.BigEndian, field)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return buf.Bytes(), nil
-}
-
-func deserializeTwampTestPacket(data []byte, pkt *TwampTestPacket) error {
-	if len(data) < 49 {
-		return fmt.Errorf("paquet trop court: %d octets", len(data))
-	}
-
-	buf := bytes.NewReader(data)
-
-	fields := []interface{}{
-		&pkt.SequenceNumber,
-		&pkt.Timestamp,
-		&pkt.ErrorEstimation,
-		&pkt.MBZ,
-		&pkt.ReceptionTimestamp,
-		&pkt.SenderSequenceNumber,
-		&pkt.SenderTimestamp,
-		&pkt.SenderErrorEstimation,
-		&pkt.SenderTTL,
-	}
-
-	for _, field := range fields {
-		if err := binary.Read(buf, binary.BigEndian, field); err != nil {
-			return fmt.Errorf("erreur lecture champ: %w", err)
-		}
-	}
-
-	// Lire les 20 octets de padding
-	pkt.Padding = make([]byte, 20)
-	if _, err := buf.Read(pkt.Padding); err != nil {
-		return fmt.Errorf("erreur lecture padding: %w", err)
-	}
-
-	return nil
-}
 
 // Envoi d'un paquet UDP
 func SendPacket(packet []byte, addr string, port int) error {
@@ -98,132 +34,152 @@ func SendPacket(packet []byte, addr string, port int) error {
 
 // Réception d'un paquet UDP
 func receivePacket(conn *net.UDPConn) ([]byte, error) {
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	buffer := make([]byte, AppConfig.Network.PacketSize)
-	n, _, err := conn.ReadFromUDP(buffer)
-	if err != nil {
-		return nil, fmt.Errorf("échec de la réception du paquet UDP: %v", err)
-	}
-	if n == 0 {
-		return nil, fmt.Errorf("paquet reçu vide (0 octet)")
-	}
-	if n > len(buffer) {
-		return nil, fmt.Errorf("paquet trop grand: %d octets", n)
-	}
-	return buffer[:n], nil
+    conn.SetReadDeadline(time.Now().Add(2 * time.Second)) // timeout 2s
+    buffer := make([]byte, AppConfig.Network.PacketSize)
+    n, _, err := conn.ReadFromUDP(buffer)
+    if err != nil {
+        if ne, ok := err.(net.Error); ok && ne.Timeout() {
+            // Timeout de lecture UDP : on peut retourner nil et gérer ça ailleurs
+            return nil, fmt.Errorf("timeout lecture UDP")
+        }
+        return nil, fmt.Errorf("échec de la réception du paquet UDP: %v", err)
+    }
+    if n == 0 {
+        return nil, fmt.Errorf("paquet reçu vide (0 octet)")
+    }
+    if n > len(buffer) {
+        return nil, fmt.Errorf("paquet trop grand: %d octets", n)
+    }
+    return buffer[:n], nil
 }
 
-func StartTest(db *sql.DB, testID int, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
-	log.Printf("🚀 [Client] Lancement du test ID %d...", testID)
+func StartTest(db *sql.DB, config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
+    log.Printf("🚀 [Client] Lancement du test ID %d...", config.TestID)
 
-	// Étape 1 : Récupération de la configuration
-	log.Println("📥 Étape 1 : Chargement de la configuration du test...")
-	config, err := core.LoadFullTestConfiguration(db, testID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("❌ Impossible de récupérer la config du test ID %d : %v", testID, err)
-	}
-	log.Printf("✅ Configuration chargée : %+v", config)
+	
+    // Étape 1 : Parse la durée
+    duration := time.Duration(config.Duration)
 
-	// Étape 2 : Marquer le test comme "en attente"
-	log.Println("📌 Étape 2 : Marquage du test comme en attente...")
-	if err := core.UpdateTestStatus(db, testID, true, false, false, false); err != nil {
-		log.Printf("⚠️ Erreur lors de la mise à jour du test en attente : %v", err)
-	}
-	if ws != nil {
-		log.Println("📤 Envoi du statut 'pending' via WebSocket...")
-		sendTestStatus(ws, testID, "pending")
-	}
+    // Étape 3 : Initialisation
+    log.Println("⚙️ Étape 3 : Initialisation des structures de métriques...")
 
-	// Étape 3 : Initialisation
-	log.Println("⚙️ Étape 3 : Initialisation des structures de métriques...")
-	duration := config.Duration
-	interval := config.Profile.SendingInterval
 
-	stats := &PacketStats{
-		StartTime:      time.Now(),
-		TargetAddress:  config.TargetIP,
-		TargetPort:     config.TargetPort,
-		LatencySamples: make([]int64, 0),
-	}
-	qos := &QoSMetrics{}
+    stats := &PacketStats{
+        StartTime:      time.Now(),
+        TargetAddress:  config.TargetIP,
+        TargetPort:     config.TargetPort,
+        LatencySamples: make([]int64, 0),
+		TestID:         config.TestID,
+	
+    }
+    qos := &QoSMetrics{}
 
-	localAddr := &net.UDPAddr{
-		IP:   net.ParseIP(config.SourceIP),
-		Port: config.SourcePort,
-	}
+    localAddr := &net.UDPAddr{
+        IP:   net.ParseIP(config.SourceIP),
+        Port: config.SourcePort,
+    }
 
-	// Étape 4 : Création du socket UDP
-	log.Println("🔌 Étape 4 : Création du socket UDP...")
-	conn, err := net.ListenUDP("udp", localAddr)
-	if err != nil {
-		return nil, nil, fmt.Errorf("❌ Échec de l'ouverture du socket UDP (%s:%d) : %v",
-			config.SourceIP, config.SourcePort, err)
-	}
-	defer conn.Close()
-	log.Printf("✅ Socket bindé sur %s:%d", config.SourceIP, config.SourcePort)
+    // Étape 4 : Création du socket UDP
+    log.Println("🔌 Étape 4 : Création du socket UDP...")
+    conn, err := net.ListenUDP("udp", localAddr)
+    if err != nil {
+        return nil, nil, fmt.Errorf("❌ Échec de l'ouverture du socket UDP (%s:%d) : %v",
+            config.SourceIP, config.SourcePort, err)
+    }
+    defer conn.Close()
+    log.Printf("✅ Socket bindé sur %s:%d", config.SourceIP, config.SourcePort)
 
-	// Étape 5 : Exécution du test
-	log.Println("🚀 Étape 5 : Lancement de la boucle d'envoi des paquets...")
-	if ws != nil {
-		log.Println("📤 Envoi du statut 'running' via WebSocket...")
-		sendTestStatus(ws, testID, "running")
-	}
-
-	testEnd := stats.StartTime.Add(duration)
-	for time.Now().Before(testEnd) {
-		if err := handleSender(stats, qos, conn, int64(testID)); err != nil {
-			log.Printf("❌ Erreur dans handleSender : %v", err)
-			_ = core.UpdateTestStatus(db, testID, false, true, false ,true )
-			if ws != nil {
-				sendTestStatus(ws, testID, "failed")
-			}
-			return nil, nil, err
+    // Étape 5 : Exécution du test
+    log.Println("🚀 Étape 5 : Lancement de la boucle d'envoi des paquets...")
+    if ws != nil {
+        log.Println("📤 Envoi du statut 'running' via WebSocket...")
+        sendTestStatus(ws, config.TestID, "running")
+		err := ws.WriteMessage(websocket.TextMessage, []byte("🟢 WS Test commencé"))
+		if err != nil {
+			log.Printf("❌ Impossible d'écrire sur WebSocket: %v", err)
+		} else {
+			log.Println("✅ Test de WebSocket : message envoyé")
 		}
-		time.Sleep(interval)
-	}
 
-	// Étape 6 : Calcul des métriques QoS
-	log.Println("📊 Étape 6 : Calcul des métriques QoS...")
-	if stats.SentPackets > 0 {
-		qos.PacketLossPercent = float64(stats.SentPackets-stats.ReceivedPackets) / float64(stats.SentPackets) * 100
-	}
+    }
 
-	if len(stats.LatencySamples) > 0 {
-		var totalLatency int64
-		for _, lat := range stats.LatencySamples {
-			totalLatency += lat
-		}
-		qos.AvgLatencyMs = float64(totalLatency) / float64(len(stats.LatencySamples)) / 1e6
-	}
+    testEnd := stats.StartTime.Add(duration)
 
-	if len(stats.LatencySamples) > 1 {
-		var totalJitter int64
-		for i := 1; i < len(stats.LatencySamples); i++ {
-			totalJitter += abs(stats.LatencySamples[i] - stats.LatencySamples[i-1])
-		}
-		qos.TotalJitter = totalJitter
-		qos.AvgJitterMs = float64(totalJitter) / float64(len(stats.LatencySamples)-1) / 1e6
-	}
+	if config.Profile == nil {
+    log.Println("❌ Erreur : config.Profile est nil")
+    return nil, nil, fmt.Errorf("config.Profile est nil")
+}
 
-	if duration.Seconds() >= 1.0 && stats.TotalBytesReceived > 0 {
-		qos.AvgThroughputKbps = float64(stats.TotalBytesReceived*8) / duration.Seconds() / 1000
-	}
+	intervalMs := config.Profile.SendingInterval
+	intervalDuration := time.Duration(intervalMs)
 
-	SetLatestMetrics(qos)
-	log.Printf("✅ Métriques calculées : %+v", qos)
+    for time.Now().Before(testEnd) {
+        if err := handleSender(stats, qos, conn, ws); err != nil {
+            log.Printf("❌ Erreur dans handleSender : %v", err)
+            if ws != nil {
+                sendTestStatus(ws, config.TestID, "failed")
+            }
+            return nil, nil, err
+        }
+        time.Sleep(intervalDuration)
+    }
 
-	// Étape 7 : Marquer le test comme terminé
-	log.Println("🏁 Étape 7 : Marquage du test comme terminé...")
-	if err := core.UpdateTestStatus(db, testID, false, false, true ,false); err != nil {
-		log.Printf("⚠️ Erreur lors de la mise à jour du test terminé : %v", err)
-	}
-	if ws != nil {
-		log.Println("📤 Envoi du statut 'finished' via WebSocket...")
-		sendTestStatus(ws, testID, "finished")
-	}
+    // Étape 6 : Calcul des métriques QoS
+    log.Println("📊 Étape 6 : Calcul des métriques QoS...")
+    if stats.SentPackets > 0 {
+        qos.PacketLossPercent = float64(stats.SentPackets-stats.ReceivedPackets) / float64(stats.SentPackets) * 100
+    }
 
-	log.Println("✅ Test terminé avec succès.")
-	return stats, qos, nil
+    if len(stats.LatencySamples) > 0 {
+        var totalLatency int64
+        for _, lat := range stats.LatencySamples {
+            totalLatency += lat
+        }
+        qos.AvgLatencyMs = float64(totalLatency) / float64(len(stats.LatencySamples)) / 1e6
+    }
+
+    if len(stats.LatencySamples) > 1 {
+        var totalJitter int64
+        for i := 1; i < len(stats.LatencySamples); i++ {
+            totalJitter += abs(stats.LatencySamples[i] - stats.LatencySamples[i-1])
+        }
+        qos.TotalJitter = totalJitter
+        qos.AvgJitterMs = float64(totalJitter) / float64(len(stats.LatencySamples)-1) / 1e6
+    }
+
+    if duration.Seconds() >= 1.0 && stats.TotalBytesReceived > 0 {
+        qos.AvgThroughputKbps = float64(stats.TotalBytesReceived*8) / duration.Seconds() / 1000
+    }
+
+    SetLatestMetrics(qos)
+    log.Printf("✅ Métriques calculées : %+v", qos)
+
+    // === Intégration Kafka ===
+    kafkaBrokers := []string{"localhost:9092"} // ou à prendre dans ta config
+    kafkaTopic := "test-results"
+
+    result := TestResult1{
+        TestID:         config.TestID,
+        LatencyMs:      qos.AvgLatencyMs,
+        JitterMs:       qos.AvgJitterMs,
+        ThroughputKbps: qos.AvgThroughputKbps,
+    }
+
+    if err := sendTestResultKafka(kafkaBrokers, kafkaTopic, result); err != nil {
+        log.Printf("❌ Erreur lors de l'envoi Kafka du résultat : %v", err)
+        // Optionnel : gérer l'erreur (stopper test, retry, etc.)
+    } else {
+        log.Printf("✅ Résultat Kafka envoyé pour TestID %d", config.TestID)
+    }
+
+    // Étape 7 : Fin du test, envoi statut "finished" via WS
+    if ws != nil {
+        log.Println("📤 Envoi du statut 'finished' via WebSocket...")
+        sendTestStatus(ws, config.TestID, "finished")
+    }
+
+    log.Println("✅ Test terminé avec succès.")
+    return stats, qos, nil
 }
 
 
@@ -255,203 +211,244 @@ func GetLatestMetrics() *QoSMetrics {
 	return latestMetrics
 }
 
-func handleSender(Stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, testID int64) error {
-	fmt.Println("🚀 handleSender : début")
+// Structure à envoyer via WebSocket
+type WsTestResult struct {
+	TestID          int     `json:"test_id"` 
+	LatencyMs       float64 `json:"latency_ms"`
+	JitterMs        float64 `json:"jitter_ms"`
+	ThroughputKbps  float64 `json:"throughput_kbps"`
+}
+
+func handleSender(stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, wsConn *websocket.Conn) error {
+	log.Println("🚀 handleSender : début")
 
 	destAddr := &net.UDPAddr{
-		IP:   net.ParseIP(Stats.TargetAddress),
-		Port: Stats.TargetPort,
+		IP:   net.ParseIP(stats.TargetAddress),
+		Port: stats.TargetPort,
 	}
+	log.Printf("➡️ Destination UDP: %s:%d", destAddr.IP.String(), destAddr.Port)
 
-	// 🏗️ Création du paquet TWAMP
+	log.Printf("🔵 Socket locale liée à: %s", conn.LocalAddr().String())
+
+	// Incrément du compteur de paquets à envoyer
+	stats.SentPackets++
+
+	// Création du paquet TWAMP
+	timestamp := uint64(time.Now().UnixNano())
 	twampPacket := TwampTestPacket{
-		SequenceNumber:        uint32(Stats.SentPackets),
-		Timestamp:             uint64(time.Now().UnixNano()),
+		SequenceNumber:        uint32(stats.SentPackets),
+		Timestamp:             timestamp,
 		ErrorEstimation:       0,
 		MBZ:                   0,
 		ReceptionTimestamp:    0,
-		SenderSequenceNumber:  uint64(Stats.SentPackets),
-		SenderTimestamp:       uint64(time.Now().UnixNano()),
+		SenderSequenceNumber:  uint64(stats.SentPackets),
+		SenderTimestamp:       timestamp,
 		SenderErrorEstimation: 0,
 		SenderTTL:             255,
 		Padding:               make([]byte, 20),
 	}
 
-	// 🧵 Sérialisation
 	serializedPacket, err := SerializeTwampTestPacket(&twampPacket)
 	if err != nil {
-		log.Printf("❌ Erreur de sérialisation: %v", err)
-		return fmt.Errorf("erreur de sérialisation du paquet TWAMP: %w", err)
-	}
-	log.Printf("📦 Paquet sérialisé (%d octets), envoi vers %s:%d", len(serializedPacket), destAddr.IP, destAddr.Port)
-
-	// 📤 Envoi du paquet
-	_, err = conn.WriteToUDP(serializedPacket, destAddr)
-	if err != nil {
-		log.Printf("❌ Erreur d'envoi: %v", err)
-		return fmt.Errorf("erreur d'envoi du paquet TWAMP: %w", err)
+		log.Printf("❌ Erreur de sérialisation TWAMP: %v", err)
+		return err
 	}
 
-	// 📥 Réception du paquet
+	if _, err := conn.WriteToUDP(serializedPacket, destAddr); err != nil {
+		log.Printf("❌ Erreur d'envoi UDP: %v", err)
+		return err
+	}
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	receivedData, err := receivePacket(conn)
 	if err != nil {
-		log.Printf("❌ Erreur de réception: %v", err)
-		return fmt.Errorf("réception paquet échouée: %w", err)
+		log.Printf("❌ Erreur de réception UDP: %v", err)
+		return err
 	}
-	Stats.TotalBytesReceived += int64(len(receivedData))
+	log.Printf("✅ Paquet reçu (%d octets)", len(receivedData))
+	stats.TotalBytesReceived += int64(len(receivedData))
+	stats.ReceivedPackets++
 
 	var receivedPacket TwampTestPacket
-	err = deserializeTwampTestPacket(receivedData, &receivedPacket)
-	if err != nil {
-		log.Printf("❌ Erreur de désérialisation: %v", err)
-		return fmt.Errorf("erreur de désérialisation du paquet reçu: %w", err)
+	if err := deserializeTwampTestPacket(receivedData, &receivedPacket); err != nil {
+		log.Printf("❌ Erreur de désérialisation TWAMP: %v", err)
+		return err
 	}
-
-	// 🕒 Timestamp de réception
 	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
 
-	// 📊 Calculs QoS
+	// Calcul de la latence
 	latency := int64(receivedPacket.ReceptionTimestamp - receivedPacket.SenderTimestamp)
-	Stats.LatencySamples = append(Stats.LatencySamples, latency)
-	Stats.LastLatency = latency
+	stats.LatencySamples = append(stats.LatencySamples, latency)
+	stats.LastLatency = latency
 
-	var jitterMs float64 = 0
-	if len(Stats.LatencySamples) > 1 {
-		prev := Stats.LatencySamples[len(Stats.LatencySamples)-2]
+	// Calcul du jitter
+	var jitterMs float64
+	if len(stats.LatencySamples) > 1 {
+		prev := stats.LatencySamples[len(stats.LatencySamples)-2]
 		jitter := abs(latency - prev)
 		qos.TotalJitter += jitter
-		jitterMs = float64(qos.TotalJitter) / float64(len(Stats.LatencySamples)-1) / 1e6
+		jitterMs = float64(qos.TotalJitter) / float64(len(stats.LatencySamples)-1) / 1e6
 	}
 
-	Stats.ReceivedPackets++
-	Stats.SentPackets++
+	// Calcul du débit
+	elapsed := time.Since(stats.StartTime).Seconds()
+	var throughputKbps float64
+	if elapsed > 0 {
+		throughputKbps = float64(stats.TotalBytesReceived*8) / 1000 / elapsed
+	}
 
 	latencyMs := float64(latency) / 1e6
 
-	// 📡 Calcul du débit moyen en kbps
-	elapsed := time.Since(Stats.StartTime).Seconds()
-	throughputKbps := float64(Stats.TotalBytesReceived*8) / 1000 / elapsed
+	// Construction du message WebSocket
+	wsResult := WsTestResult{
+		TestID:         stats.TestID,
+		LatencyMs:      latencyMs,
+		JitterMs:       jitterMs,
+		ThroughputKbps: throughputKbps,
+	}
 
-	// 🧾 Affichage des métriques
+	// Envoi WebSocket
+	if wsConn != nil {
+		log.Printf("📡 Envoi WebSocket actif : TestID=%d", stats.TestID)
+		data, err := json.Marshal(wsResult)
+		if err != nil {
+			log.Printf("❌ Erreur JSON WebSocket : %v", err)
+		} else if err := wsConn.WriteMessage(websocket.TextMessage, data); err != nil {
+			log.Printf("❌ Erreur envoi WebSocket : %v", err)
+		} else {
+			log.Println("📤 Résultat envoyé via WebSocket.")
+		}
+	}
+
+	// Affichage console
 	fmt.Printf("✅ [Paquet %d] Latence: %.3f ms | Jitter: %.3f ms | Débit: %.3f kbps\n",
-		Stats.SentPackets,
-		latencyMs,
-		jitterMs,
-		throughputKbps)
-
-	// 🛢️ Sauvegarde des résultats dans la base de données
-	db, err := core.InitDB()
-	if err != nil {
-		log.Fatalf("❌ Impossible de se connecter à la base : %v", err)
-	}
-	defer db.Close()
-
-	if err := core.SaveAttemptResult(db, testID, latencyMs, jitterMs, throughputKbps); err != nil {
-		log.Printf("❌ Erreur insertion BDD: %v", err)
-	}
+		stats.SentPackets, latencyMs, jitterMs, throughputKbps)
 
 	return nil
 }
 
-func handleReflector(conn *net.UDPConn, addr *net.UDPAddr, data []byte) error {
-	var receivedPacket TwampTestPacket
 
-	// 1. Désérialisation du paquet reçu
-	err := deserializeTwampTestPacket(data, &receivedPacket)
-	if err != nil {
+func handleReflector(conn *net.UDPConn, addr *net.UDPAddr, data []byte) error {
+	log.Println("🟢 Reflector lancé...")
+
+	var receivedPacket TwampTestPacket
+	if err := deserializeTwampTestPacket(data, &receivedPacket); err != nil {
 		return fmt.Errorf("erreur de désérialisation: %v", err)
 	}
 
-	// 2. Ajout du timestamp de réception
+	// Ne pas modifier le SenderTimestamp d'origine
 	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
 
-	// ✅ 3. Mise à jour du SenderTimestamp pour refléter l'instant du renvoi
-	receivedPacket.SenderTimestamp = uint64(time.Now().UnixNano())
-
-	// 3. Sérialisation du paquet modifié
 	serializedPacket, err := SerializeTwampTestPacket(&receivedPacket)
 	if err != nil {
+		log.Printf("❌ Sérialisation échouée: %v", err)
 		return fmt.Errorf("erreur de sérialisation: %v", err)
 	}
 
-	// ✅ Réponse avec la même connexion à l'adresse d'origine
-	_, err = conn.WriteToUDP(serializedPacket, addr)
-	if err != nil {
+	if _, err := conn.WriteToUDP(serializedPacket, addr); err != nil {
 		return fmt.Errorf("échec de l'envoi de la réponse: %v", err)
 	}
-	log.Printf("✅ Paquet réponse envoyé à %s (%d octets)", addr.String(), len(serializedPacket))
-	log.Printf("🎯 Paquet reçu: Sequence #%d", receivedPacket.SequenceNumber)
-	log.Printf("📦 Renvoi du paquet vers %s", addr.String())
 
+	log.Printf("✅ Réponse envoyée à %s (%d octets), Seq #%d",
+		addr.String(), len(serializedPacket), receivedPacket.SequenceNumber)
 	return nil
 }
 
-// Fonction qui gère l'écoute sur le port Reflector (UDP)
+
 func listenAsReflector() {
-	// Adresse du serveur (Reflector)
 	addr := net.UDPAddr{
 		Port: AppConfig.Reflector.Port,
 		IP:   net.ParseIP(AppConfig.Reflector.IP),
 	}
 
-	// Ouverture du socket UDP pour écouter les paquets
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
-		log.Fatalf("Erreur écoute UDP: %v", err)
+		log.Fatalf("❌ Erreur écoute UDP: %v", err)
 	}
 	defer conn.Close()
 
-	// Tampon pour recevoir les paquets
 	buffer := make([]byte, 1500)
+	log.Printf("🟢 Reflector en écoute sur %s", addr.String())
 
-	log.Println("Reflector en écoute sur", addr.String())
-
-	// Boucle pour écouter les paquets en continu
 	for {
-		// Lecture d'un paquet depuis la connexion UDP
 		n, remoteAddr, err := conn.ReadFromUDP(buffer)
 		if err != nil {
-			log.Printf("Erreur lecture paquet UDP: %v", err)
-			continue // Si erreur, on passe à l'itération suivante
+			log.Printf("⚠️ Erreur lecture paquet UDP: %v", err)
+			continue
 		}
 
-		log.Printf("Reçu %d octets de %s", n, remoteAddr.String())
+		// Copier le buffer pour éviter les conflits entre goroutines
+		dataCopy := make([]byte, n)
+		copy(dataCopy, buffer[:n])
 
-		// Lancer une goroutine pour gérer le paquet reçu (envoi de réponse ou traitement)
-		go func(conn *net.UDPConn, data []byte, addr *net.UDPAddr) {
-			err := handleReflector(conn, addr, data)
-			if err != nil {
-				log.Printf("Erreur traitement paquet dans handleReflector: %v", err)
+		go func(data []byte, addr *net.UDPAddr) {
+			if err := handleReflector(conn, addr, data); err != nil {
+				log.Printf("❌ Erreur handleReflector: %v", err)
 			}
-		}(conn, buffer[:n], remoteAddr)
-
+		}(dataCopy, remoteAddr)
 	}
 }
 
 
-
 func Start(db *sql.DB) {
+	log.Println("🚀 [Agent] Démarrage de l'agent TWAMP...")
 
-	log.Println("Démarrage de l'agent TWAMP...")
-
+	// Chargement de la configuration
 	LoadConfig("agent/config.yaml")
 
-	// Mode Reflector TWAMP
-	go listenAsReflector()
+	// Lancement du serveur local (TWAMP listener)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("🔥 [Agent] Panic dans le serveur : %v", r)
+			}
+		}()
+		Serveur()
+	}()
+	log.Println("📡 [Agent] Serveur TCP lancé.")
+	time.Sleep(1 * time.Second) // Laisser le temps au serveur de démarrer
 
-	// Serveur gRPC pour Quick Tests
-	//go startGRPCServer()
+	// Lancement du Reflector TWAMP EN PREMIER
+	go func() {
+		defer log.Println("❌ [Agent] Reflector a quitté.")
+		log.Println("🔁 [Agent] Lancement du Reflector TWAMP...")
+		listenAsReflector()
+	}()
+	log.Println("✅ [Agent] Reflector TWAMP lancé.")
+	time.Sleep(1 * time.Second) 
 
-	// Attente du démarrage des services
-	time.Sleep(2 * time.Second)
+	// ✅ Lancement du WebSocket Agent (avant testWorker)
+	wsConn, err := StartWebSocketAgent()
+	if err != nil {
+		log.Fatalf("❌ Impossible d'établir la connexion WebSocket : %v", err)
+	}
+	defer wsConn.Close()
+	log.Println("🔌 [Agent] Connexion WebSocket établie.")
 
-	// WebSocket QoS
-	go StartWebSocketAgent()
+
+	// **ICI : démarrer le worker qui consomme la file de tests**
+	ctx := context.Background()
+	go testWorker(ctx, db) 
+
+	// Lancement du listener Kafka
+	go func() {
+		defer log.Println("❌ [Agent] Kafka Listener a quitté.")
+		ListenToTestRequestsFromKafka(db)
+	}()
+	log.Println("📨 [Agent] Écoute Kafka lancée.")
 
 
-	// Connexion au backend gRPC (client stream)
-	go startClientStream()
+	// Lancement du client gRPC stream
+	go func() {
+		defer log.Println("❌ [Agent] Client Stream arrêté.")
+		startClientStream()
+	}()
+	log.Println("🌐 [Agent] gRPC Stream Client lancé.")
 
-	// Blocage principal pour empêcher l'arrêt
+
 	select {}
 }
+
+
+
+
