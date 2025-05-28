@@ -6,10 +6,6 @@ import (
 	
 )
 
-type TestStatus struct {
-    TestID int    `json:"test_id"`
-    Status string `json:"status"`
-}
 
 type WebSocketMessage struct {
     Type    string      `json:"type"`

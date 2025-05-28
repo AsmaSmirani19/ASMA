@@ -957,8 +957,6 @@ func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, 
     return &config, nil
 }
 
-
-
 func UpdateTestStatus(db *sql.DB, testID int, inProgress, failed, completed, errorFlag bool) error {
 	result, err := db.Exec(`
 		UPDATE test

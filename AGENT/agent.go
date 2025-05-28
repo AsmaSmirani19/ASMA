@@ -56,21 +56,18 @@ func receivePacket(conn *net.UDPConn) ([]byte, error) {
 func StartTest(db *sql.DB, config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
     log.Printf("🚀 [Client] Lancement du test ID %d...", config.TestID)
 
-	
     // Étape 1 : Parse la durée
     duration := time.Duration(config.Duration)
 
     // Étape 3 : Initialisation
     log.Println("⚙️ Étape 3 : Initialisation des structures de métriques...")
 
-
     stats := &PacketStats{
         StartTime:      time.Now(),
         TargetAddress:  config.TargetIP,
         TargetPort:     config.TargetPort,
         LatencySamples: make([]int64, 0),
-		TestID:         config.TestID,
-	
+        TestID:         config.TestID,
     }
     qos := &QoSMetrics{}
 
@@ -89,35 +86,40 @@ func StartTest(db *sql.DB, config TestConfig, ws *websocket.Conn) (*PacketStats,
     defer conn.Close()
     log.Printf("✅ Socket bindé sur %s:%d", config.SourceIP, config.SourcePort)
 
-    // Étape 5 : Exécution du test
+    // Étape 5 : Lancement de la boucle d'envoi des paquets
     log.Println("🚀 Étape 5 : Lancement de la boucle d'envoi des paquets...")
+
     if ws != nil {
         log.Println("📤 Envoi du statut 'running' via WebSocket...")
-        sendTestStatus(ws, config.TestID, "running")
-		err := ws.WriteMessage(websocket.TextMessage, []byte("🟢 WS Test commencé"))
-		if err != nil {
-			log.Printf("❌ Impossible d'écrire sur WebSocket: %v", err)
-		} else {
-			log.Println("✅ Test de WebSocket : message envoyé")
-		}
+        if err := sendTestStatus(ws, config.TestID, "In progress"); err != nil {
+            log.Printf("❌ Erreur envoi statut running: %v", err)
+        }
 
+        err := ws.WriteMessage(websocket.TextMessage, []byte("🟢 WS Test commencé"))
+        if err != nil {
+            log.Printf("❌ Impossible d'écrire sur WebSocket: %v", err)
+        } else {
+            log.Println("✅ Test de WebSocket : message envoyé")
+        }
     }
 
     testEnd := stats.StartTime.Add(duration)
 
-	if config.Profile == nil {
-    log.Println("❌ Erreur : config.Profile est nil")
-    return nil, nil, fmt.Errorf("config.Profile est nil")
-}
+    if config.Profile == nil {
+        log.Println("❌ Erreur : config.Profile est nil")
+        return nil, nil, fmt.Errorf("config.Profile est nil")
+    }
 
-	intervalMs := config.Profile.SendingInterval
-	intervalDuration := time.Duration(intervalMs)
+    intervalMs := config.Profile.SendingInterval
+    intervalDuration := time.Duration(intervalMs)
 
     for time.Now().Before(testEnd) {
         if err := handleSender(stats, qos, conn, ws); err != nil {
             log.Printf("❌ Erreur dans handleSender : %v", err)
             if ws != nil {
-                sendTestStatus(ws, config.TestID, "failed")
+                if err := sendTestStatus(ws, config.TestID, "failed"); err != nil {
+                    log.Printf("❌ Erreur envoi statut failed: %v", err)
+                }
             }
             return nil, nil, err
         }
@@ -175,7 +177,9 @@ func StartTest(db *sql.DB, config TestConfig, ws *websocket.Conn) (*PacketStats,
     // Étape 7 : Fin du test, envoi statut "finished" via WS
     if ws != nil {
         log.Println("📤 Envoi du statut 'finished' via WebSocket...")
-        sendTestStatus(ws, config.TestID, "finished")
+        if err := sendTestStatus(ws, config.TestID, "completed"); err != nil {
+            log.Printf("❌ Erreur envoi statut finished: %v", err)
+        }
     }
 
     log.Println("✅ Test terminé avec succès.")
@@ -388,6 +392,15 @@ func listenAsReflector() {
 		}(dataCopy, remoteAddr)
 	}
 }
+
+
+
+
+type TestStatusMessage struct {
+	Type    string      `json:"type"`
+	Payload TestStatus  `json:"payload"`
+}
+
 
 
 func Start(db *sql.DB) {
