@@ -7,6 +7,79 @@ import(
 
 )
 
+
+
+const (
+	PacketTypeSessionRequest = 0x01
+	PacketTypeSessionAccept  = 0x02
+	PacketTypeStartSession   = 0x03
+	PacketTypeStartAck       = 0x04
+	PacketTypeStopSession    = 0x05
+)
+
+
+func identifyPacketType(data []byte) string {
+	if len(data) < 1 {
+		return "Unknown"
+	}
+
+	switch data[0] {
+	case PacketTypeSessionRequest:
+		return "SessionRequest"
+	case PacketTypeSessionAccept:
+		return "SessionAccept"
+	case PacketTypeStartSession:
+		return "StartSession"
+	case PacketTypeStartAck:
+		return "StartAck"
+	case PacketTypeStopSession:
+		return "StopSession"
+	default:
+		return "Unknown"
+	}
+}
+// structure des paquets
+type SendSessionRequestPacket struct {
+	Type          byte
+	SenderAddress [16]byte
+	//ReceiverPort  uint16
+	//SenderPort    uint16
+	PaddingLength uint32
+	StartTime     uint32
+	Timeout       uint32
+	TypeP         uint8
+}
+
+type SessionAcceptPacket struct {
+	Accept         uint8
+	MBZ            uint8
+	Port           uint16
+	ReflectedOctet [16]byte
+	ServerOctets   [16]byte
+	SID            uint32
+	HMAC           [16]byte
+}
+
+type StartSessionPacket struct {
+	Type byte
+	MBZ  uint8
+	HMAC [16]byte
+}
+
+type StartAckPacket struct {
+	Accept uint8
+	MBZ    uint8
+	HMAC   [16]byte
+}
+
+type StopSessionPacket struct {
+	Type             byte
+	Accept           uint8
+	MBZ              uint8
+	NumberOfSessions uint8
+	HMAC             [16]byte
+}
+
 func SerializeTwampTestPacket(packet *TwampTestPacket) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
@@ -82,8 +155,8 @@ func SerializePacket(packet *SendSessionRequestPacket) ([]byte, error) {
 	}
 
 	fields := []interface{}{
-		packet.ReceiverPort,
-		packet.SenderPort,
+		//packet.ReceiverPort,
+		//packet.SenderPort,
 		packet.PaddingLength,
 		packet.StartTime,
 		packet.Timeout,

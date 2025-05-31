@@ -4,10 +4,11 @@ sender:
 
 reflector:
   ip: "127.0.0.1"
-  port: 60000
+  port: 8080
 
 grpc:
-  port: ":50052"
+  port: "50051"
+
 
 server1:
   main: "localhost:50051"
@@ -15,8 +16,8 @@ server1:
 network:
   server_address: "127.0.0.1"
   server_port: 9090
-  sender_port: 5000      # Tu as défini sender_port dans struct, ajoute-le ici
-  receiver_port: 60000   # Même chose pour receiver_port
+    # Tu as défini sender_port dans struct, ajoute-le ici
+    # Même chose pour receiver_port
   listen_port: 5000
   packet_size: 1500
   timeout: "30s"

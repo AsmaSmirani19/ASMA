@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"mon-projet-go/testpb"
 
 	"time"
 	"net/http"
@@ -85,18 +84,6 @@ func listenToTestResultsAndStore(db *sql.DB) {
 	}
 }
 
-// Implémentation du service Health côté serveur
-type healthServer struct {
-	testpb.UnimplementedHealthServer
-}
-
-// Méthode HealthCheck appelée par l'agent
-func (s *healthServer) HealthCheck(ctx context.Context, req *testpb.HealthCheckRequest) (*testpb.HealthCheckResponse, error) {
-	log.Println("Reçu une requête HealthCheck de l'agent")
-	return &testpb.HealthCheckResponse{Status: "OK"}, nil
-}
-
-
 
 func Start(db *sql.DB) {
 
@@ -115,50 +102,51 @@ func Start(db *sql.DB) {
 	http.HandleFunc("/api/threshold", handleThreshold(db))
 	http.HandleFunc("/api/tests", handleTests(db))
 	http.HandleFunc("/api/trigger-test", triggerTestHandler(db))
-	//http.HandleFunc("/api/test-results", handleTestResults(db))
-
-	//http.HandleFunc("/ws/health", healthWebSocketHandler)
-
 	http.HandleFunc("/api/test-results", handleGetAllTests)
 	http.HandleFunc("/api/test-results/", handleGetTestByID)
-
 	http.HandleFunc("/api/planned-test", handlePlannedTest(db))
 
+	//http.HandleFunc("/api/test-results", handleTestResults(db))
+	//http.HandleFunc("/ws/health", healthWebSocketHandler)
 
-	// 🌍 5. Middleware CORS
+
+	// 🌍 4. Middleware CORS
 	c := cors.New(cors.Options{
-    AllowedOrigins: []string{"http://localhost:4200", "http://localhost:54010"},
-    AllowedMethods: []string{"GET", "POST", "DELETE", "PUT", "OPTIONS"},
-    AllowedHeaders: []string{"Content-Type", "Authorization"},
-})
+		AllowedOrigins: []string{
+			"http://localhost:4200",
+			"http://localhost:54010",
+			"http://localhost:56617", // Ajout pour résoudre ton erreur actuelle
+		},
+		AllowedMethods: []string{"GET", "POST", "DELETE", "PUT", "OPTIONS"},
+		AllowedHeaders: []string{"Content-Type", "Authorization"},
+	})
 
-	// Exemple d'utilisation avec http.DefaultServeMux
-	handler := c.Handler(http.DefaultServeMux)
-
-	http.ListenAndServe(":5000", handler)
-
-
-	// 🚀 6. Lancement du serveur HTTP
+	// 🚀 5. Lancement du serveur HTTP
 	go func() {
 		fmt.Println("🌐 Serveur HTTP lancé sur http://localhost:5000")
-		log.Fatal(http.ListenAndServe(":5000", handler))
+		handler := c.Handler(http.DefaultServeMux)
+		if err := http.ListenAndServe(":5000", handler); err != nil {
+			log.Fatalf("❌ Erreur serveur HTTP : %v", err)
+		}
 	}()
 
-	// 🚀 7. Lancement du serveur gRPC
-	go startGRPCServer()
+	// 📦 6. Lancement du consommateur Kafka pour les résultats de test
+	ctx := context.Background()
+	go ConsumeTestResults(ctx,
+		[]string{"localhost:9092"}, // brokers Kafka
+		"test-results",             // topic
+		"test-group",               // group ID
+    db,                        // <--- Ajoute la variable db ici
+	)
 
-	// 8. Création du service
+
+	// 🔁 7. Vérification des agents
 	agentService := &AgentService{db: db}
 	agentService.CheckAllAgents()
 
-	// 🎧 9. Écoute des résultats de tests TWAMP
+	// 🎧 8. Écoute active des résultats TWAMP
 	go listenToTestResultsAndStore(db)
-	 
-	// 🧪 10. Lancement du serveur et client TWAMP
-	//go Serveur()
-	time.Sleep(1 * time.Second) // délai pour laisser le serveur démarrer
 
-
-	// 🛑 11. Blocage principal pour garder le serveur actif
+	// 🛑 9. Blocage principal pour garder le serveur actif
 	select {}
 }

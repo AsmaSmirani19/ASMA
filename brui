@@ -170,3 +170,29 @@ type TestConfig struct {
     ProfileID      int    `json:"profile_id"`
     ThresholdID    int    `json:"threshold_id"`
 }
+
+
+
+type MinimalTestConfiguration struct {
+    TestID          int           `json:"test_id"`
+    Duration        time.Duration `json:"duration"`
+    SourceIP        string        `json:"source_ip"`
+    SourcePort      int           `json:"source_port"`
+    TargetIP        string        `json:"target_ip"`
+    TargetPort      int           `json:"target_port"`
+    PacketSize      int           `json:"packet_size"`
+    SendingInterval time.Duration `json:"sending_interval"`
+}
+
+func NewMinimalConfig(full *FullTestConfiguration) *MinimalTestConfiguration {
+    return &MinimalTestConfiguration{
+        TestID:          full.TestID,
+        Duration:        full.Duration,
+        SourceIP:        full.SourceIP,
+        SourcePort:      full.SourcePort,
+        TargetIP:        full.TargetIP,
+        TargetPort:      full.TargetPort,
+        PacketSize:      full.Profile.PacketSize,
+        SendingInterval: full.Profile.SendingInterval,
+    }
+}

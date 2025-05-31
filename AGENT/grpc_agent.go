@@ -1,62 +1,85 @@
-
 package agent
 
 import (
 	"context"
+	"fmt"
 	"log"
-	
+	"net"
 	"mon-projet-go/testpb"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"errors"
+
 )
 
 
-
-// *** etablit la cnx avec le serveur 
- func startClientStream() {
-	conn, err := grpc.Dial(
-		AppConfig.Server1.Main,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
-	if err != nil {
-		log.Fatalf("Échec de connexion au serveur principal : %v", err)
-	}
-	defer conn.Close()
-
-	client := testpb.NewTestServiceClient(conn)
-	stream, err := client.PerformQuickTest(context.Background())
-	if err != nil {
-		log.Fatalf("Échec de création du stream : %v", err)
-	}
-
-	log.Println("Connexion au serveur principal établie")
-
-	// Boucle pour maintenir la connexion ouverte
-	for {
-		select {
-		case <-stream.Context().Done():
-			log.Println("Connexion au serveur terminée")
-			return
-		}
-	}
+// Implémentation du service Health
+type healthServer struct {
+	testpb.UnimplementedHealthServer
 }
 
-
-type TestResults struct {
-	Latency    float64
-	Jitter     float64
-	Throughput float64
+func (s *healthServer) HealthCheck(ctx context.Context, req *testpb.HealthCheckRequest) (*testpb.HealthCheckResponse, error) {
+	log.Println("HealthCheck reçu")
+	return &testpb.HealthCheckResponse{Status: "OK"}, nil
 }
 
-
+// twampAgent implémente le service gRPC côté agent
 type twampAgent struct {
 	testpb.UnimplementedTestServiceServer
-
-	// Callback appelé pour lancer le test avec les paramètres reçus
-	TestCallback func(params *testpb.TestParameters) (TestResults, error)
 }
- 
+
+func startAgentServer() {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%s", AppConfig.GRPC.Port))
+	if err != nil {
+		log.Fatalf("Échec écoute agent sur port %s : %v", AppConfig.GRPC.Port, err)
+	}
+	log.Printf("Agent gRPC démarré sur le port %s", AppConfig.GRPC.Port)
+
+    grpcServer := grpc.NewServer()
+    testpb.RegisterTestServiceServer(grpcServer, &twampAgent{})
+
+	
+	// Enregistre aussi le service Health
+	testpb.RegisterHealthServer(grpcServer, &healthServer{})
+	
+    if err := grpcServer.Serve(listener); err != nil {
+        log.Fatalf("Erreur démarrage serveur agent : %v", err)
+    }
+}
+
+func ConvertProtoProfileToGo(protoProfile *testpb.Profile) *Profile {
+	if protoProfile == nil {
+		return nil
+	}
+	return &Profile{
+		ID:              int(protoProfile.Id),
+		SendingInterval: int64(protoProfile.SendingInterval),// nanosecondes
+		PacketSize:      int(protoProfile.PacketSize),
+	}
+}
+
+// ConvertProtoConfigToGo convertit la config protobuf en struct Go native
+func ConvertProtoConfigToGo(protoConfig *testpb.TestConfig) TestConfig {
+	config := TestConfig{
+		TestID:         int(protoConfig.TestId),
+		Name:           protoConfig.Name,
+		Duration:       protoConfig.Duration,
+
+		NumberOfAgents: int(protoConfig.NumberOfAgents),
+		SourceID:       int(protoConfig.SourceId),
+		SourceIP:       protoConfig.SourceIp,
+		SourcePort:     int(protoConfig.SourcePort),
+		TargetID:       int(protoConfig.TargetId),
+		TargetIP:       protoConfig.TargetIp,
+		TargetPort:     int(protoConfig.TargetPort),
+		ProfileID:      int(protoConfig.ProfileId),
+		Profile:        ConvertProtoProfileToGo(protoConfig.Profile),
+	}
+
+	log.Printf("🧪 Agent : Config convertie : %+v, Profile nil ? %v", config, protoConfig.Profile == nil)
+
+	return config
+}
+
 func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
 	log.Println("🟢 Agent : connexion de test rapide reçue")
 
@@ -70,41 +93,46 @@ func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTest
 		switch msg := in.Message.(type) {
 		case *testpb.QuickTestMessage_Request:
 			cmd := msg.Request
-
 			log.Printf("📥 Commande de test reçue : test_id = %s", cmd.TestId)
 
-			if a.TestCallback == nil {
-				log.Println("⚠️ Aucun callback défini pour lancer le test")
-				return nil
+			if cmd.Config == nil {
+				errMsg := "config manquante dans la requête"
+				log.Printf("❌ %s", errMsg)
+				return errors.New(errMsg)
 			}
 
-			// Appel au callback avec les paramètres reçus
-			results, err := a.TestCallback(cmd.Parameters)
-			if err != nil {
-				log.Printf("❌ Erreur exécution test client : %v", err)
-				return err
+			if cmd.Config.Profile == nil {
+				errMsg := "config reçue, mais Profile est nil, test non lancé"
+				log.Printf("❌ %s", errMsg)
+				continue // ou return selon ton besoin
 			}
 
-			// Envoyer les résultats
+			config := ConvertProtoConfigToGo(cmd.Config)
+
+			go func(cfg TestConfig) {
+				if err := Client(cfg); err != nil {
+					log.Printf("❌ Erreur Client() : %v", err)
+				}
+			}(config)
+
 			err = stream.Send(&testpb.QuickTestMessage{
 				Message: &testpb.QuickTestMessage_Response{
 					Response: &testpb.QuickTestResponse{
-						LatencyMs:      results.Latency,
-						JitterMs:       results.Jitter,
-						ThroughputKbps: results.Throughput,
+						Status: "Test lancé",
 					},
 				},
 			})
 			if err != nil {
-				log.Printf("❌ Erreur envoi résultats au serveur : %v", err)
+				log.Printf("❌ Erreur envoi réponse : %v", err)
 				return err
 			}
-
-			log.Println("✅ Résultats envoyés au serveur.")
-			// continue la boucle pour traiter d'autres commandes
 
 		default:
 			log.Println("⚠️ Type de message non reconnu")
 		}
 	}
 }
+
+
+
+

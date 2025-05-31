@@ -2,10 +2,8 @@ package agent
 
 
 import (
-	"time"
-	
+	"time"	
 )
-
 
 type WebSocketMessage struct {
     Type    string      `json:"type"`

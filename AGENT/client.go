@@ -5,64 +5,12 @@ import(
 	"time"
 	"net"
 	"fmt"
-	"database/sql"
+	//"database/sql"
 	"strconv"
 	
 	//"github.com/gorilla/websocket"
 
 )
-
-
-// structure des paquets
-type SendSessionRequestPacket struct {
-	Type          byte
-	SenderAddress [16]byte
-	ReceiverPort  uint16
-	SenderPort    uint16
-	PaddingLength uint32
-	StartTime     uint32
-	Timeout       uint32
-	TypeP         uint8
-}
-
-type SessionAcceptPacket struct {
-	Accept         uint8
-	MBZ            uint8
-	Port           uint16
-	ReflectedOctet [16]byte
-	ServerOctets   [16]byte
-	SID            uint32
-	HMAC           [16]byte
-}
-
-type StartSessionPacket struct {
-	Type byte
-	MBZ  uint8
-	HMAC [16]byte
-}
-
-type StartAckPacket struct {
-	Accept uint8
-	MBZ    uint8
-	HMAC   [16]byte
-}
-
-type StopSessionPacket struct {
-	Type             byte
-	Accept           uint8
-	MBZ              uint8
-	NumberOfSessions uint8
-	HMAC             [16]byte
-}
-
-const (
-	PacketTypeSessionRequest = 0x01
-	PacketTypeSessionAccept  = 0x02
-	PacketTypeStartSession   = 0x03
-	PacketTypeStartAck       = 0x04
-	PacketTypeStopSession    = 0x05
-)
-
 
 
 func SendTCPPacket(packet []byte, addr string, port int) error {
@@ -82,34 +30,14 @@ func SendTCPPacket(packet []byte, addr string, port int) error {
 	return nil
 }
 
-func identifyPacketType(data []byte) string {
-	if len(data) < 1 {
-		return "Unknown"
-	}
 
-	switch data[0] {
-	case PacketTypeSessionRequest:
-		return "SessionRequest"
-	case PacketTypeSessionAccept:
-		return "SessionAccept"
-	case PacketTypeStartSession:
-		return "StartSession"
-	case PacketTypeStartAck:
-		return "StartAck"
-	case PacketTypeStopSession:
-		return "StopSession"
-	default:
-		return "Unknown"
-	}
-}
-
-func Client(config TestConfig, db *sql.DB) error {
+func Client(config TestConfig) error {
 	log.Println("🔵 [Client] Début d'exécution du client...")
 
 	serverAddress := AppConfig.Network.ServerAddress
 	serverPort := AppConfig.Network.ServerPort
-	senderPort := AppConfig.Network.SenderPort
-	receiverPort := AppConfig.Network.ReceiverPort
+	//senderPort := AppConfig.Network.SenderPort
+	//receiverPort := AppConfig.Network.ReceiverPort
 	timeout := AppConfig.Network.Timeout
 
 	connStr := net.JoinHostPort(serverAddress, strconv.Itoa(serverPort))
@@ -138,8 +66,8 @@ func Client(config TestConfig, db *sql.DB) error {
 	packet := SendSessionRequestPacket{
 		Type:          PacketTypeSessionRequest,
 		SenderAddress: senderIP,
-		ReceiverPort:  uint16(receiverPort),
-		SenderPort:    uint16(senderPort),
+		//ReceiverPort:  uint16(receiverPort),
+		//SenderPort:    uint16(senderPort),
 		PaddingLength: 0,
 		StartTime:     uint32(time.Now().Unix()),
 		Timeout:       uint32(timeout.Seconds()),
@@ -211,10 +139,10 @@ func Client(config TestConfig, db *sql.DB) error {
 	}
 }()
 
-
 // 6. Démarrage du test QoS avec WebSocket active
+	log.Printf("🔍 DEBUG TestConfig utilisé : %+v", config)
 	log.Println("🚀 [Client] Lancement du test via StartTest()...")
-	stats, qos, err := StartTest(db, config, wsConn)
+	stats, qos, err := StartTest( config, wsConn)
 	if err != nil {
 		log.Printf("❌ [Client] Erreur lors du test : %v", err)
 	} else {

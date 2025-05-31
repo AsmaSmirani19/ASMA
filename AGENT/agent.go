@@ -39,22 +39,38 @@ func receivePacket(conn *net.UDPConn) ([]byte, error) {
     n, _, err := conn.ReadFromUDP(buffer)
     if err != nil {
         if ne, ok := err.(net.Error); ok && ne.Timeout() {
-            // Timeout de lecture UDP : on peut retourner nil et gérer ça ailleurs
+            log.Printf("❌ Timeout lecture UDP après 2 secondes")
             return nil, fmt.Errorf("timeout lecture UDP")
         }
+        log.Printf("❌ Erreur de réception UDP: %v", err)
         return nil, fmt.Errorf("échec de la réception du paquet UDP: %v", err)
     }
+	
     if n == 0 {
+        log.Printf("❌ Paquet reçu vide (0 octet)")
         return nil, fmt.Errorf("paquet reçu vide (0 octet)")
     }
     if n > len(buffer) {
+        log.Printf("❌ Paquet trop grand: %d octets", n)
         return nil, fmt.Errorf("paquet trop grand: %d octets", n)
     }
+    log.Printf("✅ Paquet UDP reçu (%d octets)", n)
     return buffer[:n], nil
 }
 
-func StartTest(db *sql.DB, config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
+
+func StartTest( config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
     log.Printf("🚀 [Client] Lancement du test ID %d...", config.TestID)
+
+	// Vérification que l'IP et le port cible sont valides
+
+	if config.TargetIP == "" || config.TargetPort == 0 {
+		log.Println("❌ ERREUR CRITIQUE : IP ou Port cible manquant dans la configuration.")
+		if ws != nil {
+			_ = sendTestStatus(ws, config.TestID, "failed")
+		}
+		return nil, nil, fmt.Errorf("IP ou Port cible manquant : IP=%q, Port=%d", config.TargetIP, config.TargetPort)
+	}
 
     // Étape 1 : Parse la durée
     duration := time.Duration(config.Duration)
@@ -186,7 +202,6 @@ func StartTest(db *sql.DB, config TestConfig, ws *websocket.Conn) (*PacketStats,
     return stats, qos, nil
 }
 
-
 // Fonction utilitaire pour calculer la valeur absolue
 func abs(x int64) int64 {
 	if x < 0 {
@@ -226,6 +241,13 @@ type WsTestResult struct {
 func handleSender(stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, wsConn *websocket.Conn) error {
 	log.Println("🚀 handleSender : début")
 
+	// ✅ Vérification que l'adresse cible est bien définie
+	if stats.TargetAddress == "" || net.ParseIP(stats.TargetAddress) == nil || stats.TargetPort == 0 {
+		log.Printf("❌ destination UDP invalide : IP=%q, Port=%d", stats.TargetAddress, stats.TargetPort)
+		return fmt.Errorf("destination UDP invalide : IP=%q, Port=%d", stats.TargetAddress, stats.TargetPort)
+	}
+
+	// Création de l'adresse de destination
 	destAddr := &net.UDPAddr{
 		IP:   net.ParseIP(stats.TargetAddress),
 		Port: stats.TargetPort,
@@ -262,6 +284,7 @@ func handleSender(stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, wsConn
 		log.Printf("❌ Erreur d'envoi UDP: %v", err)
 		return err
 	}
+	log.Printf("📨 Attente de réponse UDP sur %s", conn.LocalAddr().String())
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	receivedData, err := receivePacket(conn)
@@ -331,30 +354,49 @@ func handleSender(stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, wsConn
 	return nil
 }
 
-
 func handleReflector(conn *net.UDPConn, addr *net.UDPAddr, data []byte) error {
 	log.Println("🟢 Reflector lancé...")
+	log.Printf("🟢 Reflector en écoute sur %s", addr.String())
+
+	log.Printf("🛠️ handleReflector appelé pour %s (taille: %d)", addr.String(), len(data))
+
+	// ✅ Log pour vérifier réception
+	log.Printf("📥 Paquet brut reçu de %s (%d octets)", addr.String(), len(data))
+	log.Printf("📦 Contenu brut (hex) : %x", data)
 
 	var receivedPacket TwampTestPacket
 	if err := deserializeTwampTestPacket(data, &receivedPacket); err != nil {
+		log.Printf("❌ Erreur de désérialisation TWAMP : %v", err)
 		return fmt.Errorf("erreur de désérialisation: %v", err)
 	}
+	log.Printf("🔍 Paquet désérialisé : Sequence #%d, Timestamp=%d", receivedPacket.SequenceNumber, receivedPacket.Timestamp)
 
-	// Ne pas modifier le SenderTimestamp d'origine
+	// ✅ Log contenu du paquet reçu
+	log.Printf("📊 TWAMP reçu ➤ Seq: %d, SenderTS: %d", receivedPacket.SequenceNumber, receivedPacket.SenderTimestamp)
+
+	// Ajout du timestamp de réception
 	receivedPacket.ReceptionTimestamp = uint64(time.Now().UnixNano())
+
+	// ✅ Log sur le timestamp de réception
+	log.Printf("⏱️ Ajout ReceptionTimestamp: %d", receivedPacket.ReceptionTimestamp)
 
 	serializedPacket, err := SerializeTwampTestPacket(&receivedPacket)
 	if err != nil {
-		log.Printf("❌ Sérialisation échouée: %v", err)
+		log.Printf("❌ Erreur de sérialisation TWAMP : %v", err)
 		return fmt.Errorf("erreur de sérialisation: %v", err)
 	}
+	// ✅ Log paquet à renvoyer
+	log.Printf("📤 Paquet TWAMP prêt à renvoyer (%d octets) à %s", len(serializedPacket), addr.String())
 
+	// Envoi
 	if _, err := conn.WriteToUDP(serializedPacket, addr); err != nil {
+		log.Printf("❌ Échec envoi UDP : %v", err)
 		return fmt.Errorf("échec de l'envoi de la réponse: %v", err)
 	}
+	log.Printf("📤 Réponse envoyée à %s (%d octets)", addr.String(), len(serializedPacket))
 
-	log.Printf("✅ Réponse envoyée à %s (%d octets), Seq #%d",
-		addr.String(), len(serializedPacket), receivedPacket.SequenceNumber)
+	// ✅ Log final succès
+	log.Printf("✅ Réponse envoyée à %s ➤ Seq: %d", addr.String(), receivedPacket.SequenceNumber)
 	return nil
 }
 
@@ -380,6 +422,7 @@ func listenAsReflector() {
 			log.Printf("⚠️ Erreur lecture paquet UDP: %v", err)
 			continue
 		}
+		log.Printf("📥 Reflector a reçu un paquet de %s (%d octets)", remoteAddr.String(), n)
 
 		// Copier le buffer pour éviter les conflits entre goroutines
 		dataCopy := make([]byte, n)
@@ -392,9 +435,6 @@ func listenAsReflector() {
 		}(dataCopy, remoteAddr)
 	}
 }
-
-
-
 
 type TestStatusMessage struct {
 	Type    string      `json:"type"`
@@ -441,7 +481,7 @@ func Start(db *sql.DB) {
 
 	// **ICI : démarrer le worker qui consomme la file de tests**
 	ctx := context.Background()
-	go testWorker(ctx, db) 
+	go testWorker(ctx) 
 
 	// Lancement du listener Kafka
 	go func() {
@@ -451,17 +491,16 @@ func Start(db *sql.DB) {
 	log.Println("📨 [Agent] Écoute Kafka lancée.")
 
 
-	// Lancement du client gRPC stream
+	// 🟢 Démarrage du serveur gRPC Agent
 	go func() {
-		defer log.Println("❌ [Agent] Client Stream arrêté.")
-		startClientStream()
+		defer log.Println("❌ [Agent] Serveur gRPC arrêté.")
+		startAgentServer()
 	}()
-	log.Println("🌐 [Agent] gRPC Stream Client lancé.")
+	log.Println("🛰️ [Agent] Serveur gRPC lancé.")
 
-
+	
 	select {}
 }
-
 
 
 

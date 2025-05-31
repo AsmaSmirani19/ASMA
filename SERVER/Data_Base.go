@@ -1,17 +1,17 @@
 package server
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
-	"context"
+	"net"
+	"strings"
 	"time"
-	"errors"
-	
-	
+
 	"github.com/lib/pq"
 )
-
 
 func SaveAttemptResult(db *sql.DB, testID int64, latency, jitter, throughput float64) error {
 	query := `
@@ -44,17 +44,16 @@ func saveResultsToDB(db *sql.DB, qos QoSMetrics) error {
 	return err
 }
 
-
 // Agent_List
 func saveAgentToDB(db *sql.DB, agent *Agent) error {
 	err := db.QueryRow(`
 		INSERT INTO "Agent_List"("Name", "Address", "Port", "Test_health")
 		VALUES($1, $2, $3, $4)
 		RETURNING id
-	`, 
+	`,
 		agent.Name,
 		agent.Address,
-		agent.Port,       // <-- ajouté ici
+		agent.Port, // <-- ajouté ici
 		agent.TestHealth,
 	).Scan(&agent.ID) // 👈 modifie bien le champ de l'objet original
 
@@ -65,7 +64,6 @@ func saveAgentToDB(db *sql.DB, agent *Agent) error {
 	log.Println("Agent inséré avec succès avec l'ID :", agent.ID)
 	return nil
 }
-
 
 // Récupère tous les agents depuis Agent_List
 func getAgentsFromDB(db *sql.DB) ([]Agent, error) {
@@ -78,7 +76,7 @@ func getAgentsFromDB(db *sql.DB) ([]Agent, error) {
 	var agents []Agent
 	for rows.Next() {
 		var a Agent
-		err := rows.Scan(&a.ID, &a.Name, &a.Address, &a.Port , &a.TestHealth) 
+		err := rows.Scan(&a.ID, &a.Name, &a.Address, &a.Port, &a.TestHealth)
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +91,7 @@ func updateAgentInDB(db *sql.DB, agent Agent) error {
 		UPDATE "Agent_List"
 		SET "Name" = $1, "Address" = $2, "Port" = $3, "Test_health" = $4
 		WHERE id = $5`,
-		agent.Name, agent.Address, agent.Port, agent.TestHealth,  agent.ID,
+		agent.Name, agent.Address, agent.Port, agent.TestHealth, agent.ID,
 	)
 	if err != nil {
 		log.Printf("Erreur lors de la mise à jour : %v\n", err)
@@ -202,7 +200,7 @@ func getAgentGroupsFromDB(db *sql.DB) ([]agentGroup, error) {
 	var groups []agentGroup
 	for rows.Next() {
 		var g agentGroup
-	
+
 		if err := rows.Scan(&g.ID, &g.GroupName, &g.CreationDate, &g.NumberOfAgents, &g.AgentIDs); err != nil {
 			log.Printf("❌ Erreur lecture ligne groupe : %v", err)
 			return nil, err
@@ -264,7 +262,7 @@ func linkAgentsToGroup(db *sql.DB, groupID int, agentIDs []int) error {
 		}
 	}
 
- // Mise à jour du nombre d'agents liés dans la table agent-group
+	// Mise à jour du nombre d'agents liés dans la table agent-group
 	_, err = tx.Exec(`
 		UPDATE "agent-group"
 		SET number_of_agents = (
@@ -314,43 +312,64 @@ func getAgentsByGroupID(db *sql.DB, groupID int) ([]Agent, error) {
 
 // test **********
 func saveTestToDB(db *sql.DB, test PlannedTest) error {
-	_, err := db.Exec(`
-		INSERT INTO "test"(
-			"test_name", 
-			"test_duration",
-			"number_of_agents",
-			"creation_date",
-			"test_type",
-			"source_id",
-			"target_id",
-			"profile_id",
-			"threshold_id",
-			"In_progress",
-			"failed",
-			"completed",
-			"Error"
+	log.Printf("Début insertion du test : %+v\n", test) // <-- 1. Juste après réception du test
+
+	firstTargetID := 0
+	if len(test.TargetAgentIDs) > 0 {
+		firstTargetID = test.TargetAgentIDs[0]
+	}
+	log.Printf("Premier target_id utilisé dans la table test: %d\n", firstTargetID) // <-- 2. Premier target_id
+
+	var testID int
+	err := db.QueryRow(`
+		INSERT INTO "test" (
+			"test_name", "test_duration", "number_of_agents", "creation_date",
+			"test_type", "source_id", "target_id", "profile_id", "threshold_id",
+			"In_progress", "failed", "completed", "Error"
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING "Id"
 	`,
-		test.TestName,       // $1
-		test.TestDuration,   // $2
-		test.NumberOfAgents, // $3
-		test.CreationDate,   // $4
-		test.TestType,       // $5
-		test.SourceID,       // $6
-		test.TargetID,       // $7
-		test.ProfileID,      // $8
-		test.ThresholdID,    // $9
-		test.InProgress,     // $10
-		test.Failed,         // $11
-		test.Completed,      // $12
-		test.Error,          // $13
-	)
+		test.TestName,
+		test.TestDuration,
+		test.NumberOfAgents,
+		test.CreationDate,
+		test.TestType,
+		test.SourceID,
+		test.TargetID,
+		test.ProfileID,
+		test.ThresholdID,
+		test.InProgress,
+		test.Failed,
+		test.Completed,
+		test.Error,
+	).Scan(&testID)
 
 	if err != nil {
-		log.Println("❌ Erreur lors de l'insertion du test :", err)
+		log.Printf("Erreur lors de l'insertion du test : %v\n", err) // <-- 3. Erreur insertion test
 		return err
 	}
-	log.Println("✅ Test enregistré avec succès.")
+	log.Printf("Test inséré avec ID : %d\n", testID) // <-- 4. ID inséré
+
+	log.Printf("Liste des target_agent_ids à insérer dans test_targets : %+v\n", test.TargetAgentIDs) // <-- 5. Liste cible
+
+	stmt, err := db.Prepare("INSERT INTO test_targets (test_id, target_id) VALUES ($1, $2)")
+	if err != nil {
+		log.Printf("Erreur préparation requête insertion test_targets : %v\n", err) // <-- 6. Préparation requête
+		return err
+	}
+	defer stmt.Close()
+
+	for _, targetID := range test.TargetAgentIDs {
+		_, err := stmt.Exec(testID, targetID)
+		if err != nil {
+			log.Printf("Erreur insertion test_targets (testID=%d, targetID=%d) : %v\n", testID, targetID, err) // <-- 7. Erreur insertion cible
+			return err
+		}
+		log.Printf("Inséré target_id %d pour test_id %d\n", targetID, testID) // <-- 8. Confirmation insertion cible
+	}
+
+	log.Println("Insertion test et targets terminée avec succès.") // <-- 9. Fin insertion OK
+
 	return nil
 }
 
@@ -366,7 +385,7 @@ func getTestsFromDB(db *sql.DB) ([]PlannedTest, error) {
 			"source_id",
 			"target_id",
 			"profile_id",
-			"threshold_id",
+			"threshold_id",            
 			"In_progress",
 			"failed",
 			"completed",
@@ -390,18 +409,44 @@ func getTestsFromDB(db *sql.DB) ([]PlannedTest, error) {
 			&t.CreationDate,
 			&t.TestType,
 			&t.SourceID,
-			&t.TargetID,
+			&t.TargetID, // on récupère directement dans TargetID
 			&t.ProfileID,
 			&t.ThresholdID,
-			&t.InProgress,  
+			&t.InProgress,
 			&t.Failed,
 			&t.Completed,
-			&t.Error,      
+			&t.Error,
 		)
+
 		if err != nil {
 			log.Printf("Erreur lors de la lecture des données du test : %v\n", err)
 			return nil, err
 		}
+
+		// Récupérer les cibles associées à ce test dans test_targets
+		targetRows, err := db.Query(`SELECT target_id FROM test_targets WHERE test_id = $1`, t.ID)
+		if err != nil {
+			log.Printf("Erreur récupération cibles pour test %d : %v\n", t.ID, err)
+			return nil, err
+		}
+
+		var targetIDs []int
+		for targetRows.Next() {
+			var targetID int
+			if err := targetRows.Scan(&targetID); err != nil {
+				log.Printf("Erreur lecture target_id : %v\n", err)
+				targetRows.Close()
+				return nil, err
+			}
+			targetIDs = append(targetIDs, targetID)
+		}
+		targetRows.Close()
+
+		// Si aucune cible dans test_targets, fallback vers TargetID dans la struct
+		if len(targetIDs) == 0 && t.TargetID != 0 {
+			targetIDs = []int{t.TargetID}
+		}
+		t.TargetAgentIDs = targetIDs
 		tests = append(tests, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -415,35 +460,62 @@ func getTestsFromDB(db *sql.DB) ([]PlannedTest, error) {
 }
 
 func updateTestInDB(db *sql.DB, test PlannedTest) error {
-	_, err := db.Exec(`
-		UPDATE "test"
-		SET 
-			"test_name" = $1, 
-			"test_duration" = $2, 
-			"number_of_agents" = $3, 
-			"creation_date" = $4, 
-			"test_type" = $5,                
-			"source_id" = $6,           
-			"target_id" = $7,           
-			"profile_id" = $8,          
-			"threshold_id" = $9,       
-			"In_progress" = $10,           
-			"failed" = $11,           
-			"completed" = $12,
-			"Error" = $13
-		WHERE "Id" = $14             
-	`,
-		test.TestName, test.TestDuration, test.NumberOfAgents, test.CreationDate,
-		test.TestType, test.SourceID, test.TargetID, test.ProfileID,
-		test.ThresholdID, test.InProgress, test.Failed, test.Completed, test.Error, test.ID,
-	)
-
+	tx, err := db.Begin()
 	if err != nil {
-		log.Printf("❌ Erreur lors de la mise à jour du test planifié avec ID %d : %v\n", test.ID, err)
 		return err
 	}
-	log.Printf("✅ Test planifié avec ID %d mis à jour avec succès.\n", test.ID)
-	return nil
+	firstTargetID := 0
+	if len(test.TargetAgentIDs) > 0 {
+		firstTargetID = test.TargetAgentIDs[0]
+	}
+	_, err = tx.Exec(`
+        UPDATE "test"
+        SET 
+            "test_name" = $1, 
+            "test_duration" = $2, 
+            "number_of_agents" = $3, 
+            "creation_date" = $4, 
+            "test_type" = $5,
+            "source_id" = $6,
+			"target_id" = $7,
+            "profile_id" = $8,
+            "threshold_id" = $8,
+            "In_progress" = $9,
+            "failed" = $10,
+            "completed" = $11,
+            "Error" = $12
+        WHERE "Id" = $13
+    `,
+		test.TestName, test.TestDuration, test.NumberOfAgents, test.CreationDate,
+		test.TestType, test.SourceID, test.TargetID, test.ProfileID,
+		test.ThresholdID, firstTargetID, // <-- ici
+		test.InProgress, test.Failed, test.Completed, test.Error, test.ID,
+	)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	// Supprimer anciennes cibles
+	_, err = tx.Exec(`DELETE FROM test_targets WHERE test_id = $1`, test.ID)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	// Insérer nouvelles cibles
+	stmt, err := tx.Prepare(`INSERT INTO test_targets (test_id, target_id) VALUES ($1, $2)`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+	for _, targetID := range test.TargetAgentIDs {
+		_, err := stmt.Exec(test.ID, targetID)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func deleteTestFromDB(db *sql.DB, testID int) error {
@@ -698,33 +770,33 @@ func deleteThresholdFromDB(db *sql.DB, thresholdID int64) error {
 	return nil
 }
 
-
-// recharge tout les test 
+// recharge tout les test
 func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	query := `
-	SELECT 
-	    t."Id",
-		t.test_name,
-		t.test_type,
-		t.creation_date,
-		t.test_duration::text,
-		sa."Name" AS source_agent,
-		ta."Name" AS target_agent,
-		th."Name" AS threshold_name,
-		CASE
-			WHEN th."avg_status" THEN th."avg"
-			WHEN th."min_status" THEN th."min"
-			WHEN th."max_status" THEN th."max"
-			ELSE NULL
-		END AS threshold_value,
-		t."In_progress",
-		t."completed",
-		t."failed",
-		t."Error"
-	FROM test t
-	JOIN "Agent_List" sa ON t.source_id = sa.id
-	JOIN "Agent_List" ta ON t.target_id = ta.id
-	LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
+			SELECT 
+			t."Id",
+			t.test_name,
+			t.test_type,
+			t.creation_date,
+			t.test_duration::text,
+			sa."Name" AS source_agent,
+			ta."Name" AS target_agent,
+			th."Name" AS threshold_name,
+			CASE
+				WHEN th."avg_status" THEN th."avg"
+				WHEN th."min_status" THEN th."min"
+				WHEN th."max_status" THEN th."max"
+				ELSE NULL
+			END AS threshold_value,
+			t."In_progress",
+			t."completed",
+			t."failed",
+			t."Error"
+		FROM test t
+		JOIN "Agent_List" sa ON t.source_id = sa."Id"
+		JOIN "Agent_List" ta ON t.target_id = ta."Id"
+		LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
+
 `
 	log.Println("Exécution de la requête SQL pour charger les tests...")
 	rows, err := db.Query(query)
@@ -740,7 +812,7 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 		var test DisplayedTest
 		log.Println("🧪 Tentative de Scan dans LoadAllTestsSummary")
 		err := rows.Scan(
-			&test.TestID, 
+			&test.TestID,
 			&test.TestName,
 			&test.TestType,
 			&test.CreationDate,
@@ -781,9 +853,10 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	return results, nil
 }
 
-
 func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
-    query := `
+	log.Printf("📥 Appel GetTestDetailsByID avec testID = %d", id)
+
+	query := `
         SELECT
             t."Id",
             t.test_name,
@@ -812,33 +885,40 @@ func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
         WHERE t."Id" = $1
     `
 
-    var details TestDetails
-    row := db.QueryRow(query, id)
-    err := row.Scan(
-        &details.TestID,  //1
-        &details.TestName, //2
-        &details.Status, //3
-        &details.CreationDate, //4
-       &details.TestDuration, //5
-        &details.SourceAgent,//6
-        &details.TargetAgent, //7
-        &details.ThresholdName, //8
-        &details.ThresholdValue, //9 
-    )
-    if err != nil {
-        return nil, err
-    }
-    return &details, nil
+	var details TestDetails
+	row := db.QueryRow(query, id)
+	err := row.Scan(
+		&details.TestID,
+		&details.TestName,
+		&details.Status,
+		&details.CreationDate,
+		&details.TestDuration,
+		&details.SourceAgent,
+		&details.TargetAgent,
+		&details.ThresholdName,
+		&details.ThresholdValue,
+	)
+
+	if err == sql.ErrNoRows {
+		log.Printf("⚠️ Aucun résultat trouvé pour le test ID=%d", id)
+		return nil, fmt.Errorf("aucun test trouvé avec ID=%d", id)
+	} else if err != nil {
+		log.Printf("❌ Erreur dans GetTestDetailsByID pour test ID=%d : %v", id, err)
+		return nil, err
+	}
+
+	log.Printf("✅ Test ID=%d trouvé avec nom: %s, status: %s", details.TestID, details.TestName, details.Status)
+	return &details, nil
 }
- 
-////****************************************************
+////****************************************/////////////
+
 func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, error) {
-    log.Printf("➡️ Début du chargement de la configuration complète du test ID=%d", testID)
+	log.Printf("➡️ Début du chargement de la configuration complète du test ID=%d", testID)
 
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-    query := `
+	query := `
     SELECT 
         t."Id",
         t.test_name,
@@ -851,112 +931,212 @@ func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, 
         t.target_id,
         ta."Address" AS target_ip,
         ta."Port" AS target_port,
-        t.profile_id,
-        t.threshold_id,
-        t."In_progress",
-        t.failed,
-        t.completed,
-        t."Error"
+        t.profile_id
     FROM test t
     JOIN "Agent_List" sa ON t.source_id = sa.id
-    JOIN "Agent_List" ta ON t.target_id = ta.id
-    WHERE t."Id" = $1  
+    LEFT JOIN "Agent_List" ta ON t.target_id = ta.id  
+    WHERE t."Id" = $1
     `
 
-    var config FullTestConfiguration
-    log.Printf("🔍 Exécution de la requête principale pour test ID=%d", testID)
-    err := db.QueryRowContext(ctx, query, testID).Scan(
-        &config.TestID,
-        &config.Name,
-        &config.TestType,
-        &config.RawDuration,
-        &config.NumberOfAgents,
-        &config.SourceID,
-        &config.SourceIP,
-        &config.SourcePort,
-        &config.TargetID,
-        &config.TargetIP,
-        &config.TargetPort,
-        &config.ProfileID,
-        &config.ThresholdID,
-        &config.InProgress,
-        &config.Failed,
-        &config.Completed,
-        &config.Error,
-    )
-    if err != nil {
-        log.Printf("❌ Erreur récupération test ID=%d : %v", testID, err)
-        return nil, fmt.Errorf("erreur récupération test: %w", err)
-    }
+	var config FullTestConfiguration
+	var targetID sql.NullInt64
+	var targetIP sql.NullString
+	var targetPort sql.NullInt64
 
-    log.Printf("✅ Test ID=%d récupéré : profile_id=%d", config.TestID, config.ProfileID)
-    if config.ProfileID == 0 {
-        log.Printf("⚠️ ProfileID est 0, vérifier la base de données ou la requête")
-    }
+	log.Printf("🔍 Exécution de la requête principale pour test ID=%d", testID)
+	err := db.QueryRowContext(ctx, query, testID).Scan(
+		&config.TestID,
+		&config.Name,
+		&config.TestType,
+		&config.RawDuration,
+		&config.NumberOfAgents,
+		&config.SourceID,
+		&config.SourceIP,
+		&config.SourcePort,
+		&targetID,
+		&targetIP,
+		&targetPort,
+		&config.ProfileID,
+	)
 
-    config.Duration, err = ParsePGInterval(config.RawDuration)
-    if err != nil {
-        log.Printf("❌ Durée invalide pour test ID=%d : %v", testID, err)
-        return nil, fmt.Errorf("durée invalide: %w", err)
-    }
-    log.Printf("⏳ Durée du test ID=%d convertie : %v", testID, config.Duration)
+	if err != nil {
+		log.Printf("❌ Erreur récupération test ID=%d : %v", testID, err)
+		return nil, fmt.Errorf("erreur récupération test: %w", err)
+	}
 
-    // Chargement du profil lié
-    profileQuery := `
+	// Mise à jour config.TargetID avec 0 si NULL
+	if targetID.Valid {
+		config.TargetID = int(targetID.Int64)
+	} else {
+		config.TargetID = 0
+	}
+
+	// Mise à jour config.TargetIP et TargetPort en tenant compte du NULL possible
+	if targetIP.Valid {
+		config.TargetIP = strings.TrimSpace(targetIP.String)
+	} else {
+		config.TargetIP = ""
+	}
+	if targetPort.Valid {
+		config.TargetPort = int(targetPort.Int64)
+	} else {
+		config.TargetPort = 0
+	}
+
+	// Validation renforcée des adresses et ports (uniquement si non vide)
+	if config.TargetID != 0 {
+		if config.TargetIP == "" {
+			return nil, fmt.Errorf("adresse IP cible vide pour test ID=%d", testID)
+		}
+		if ip := net.ParseIP(config.TargetIP); ip == nil {
+			return nil, fmt.Errorf("adresse IP cible invalide: %s", config.TargetIP)
+		}
+		if config.TargetPort <= 0 || config.TargetPort > 65535 {
+			return nil, fmt.Errorf("port cible invalide: %d", config.TargetPort)
+		}
+	}
+
+	if config.SourceIP == "" {
+		return nil, fmt.Errorf("adresse IP source vide pour test ID=%d", testID)
+	}
+	config.SourceIP = strings.TrimSpace(config.SourceIP)
+	if ip := net.ParseIP(config.SourceIP); ip == nil {
+		return nil, fmt.Errorf("adresse IP source invalide: %s", config.SourceIP)
+	}
+	if config.SourcePort <= 0 || config.SourcePort > 65535 {
+		return nil, fmt.Errorf("port source invalide: %d", config.SourcePort)
+	}
+
+	log.Printf("📦 Configuration réseau - Source: %s:%d, Target: %s:%d",
+		config.SourceIP, config.SourcePort, config.TargetIP, config.TargetPort)
+
+	if config.ProfileID == 0 {
+		log.Printf("⚠️ ProfileID est 0, vérifier la base de données ou la requête")
+	}
+
+	config.Duration, err = ParsePGInterval(config.RawDuration)
+	if err != nil {
+		log.Printf("❌ Durée invalide pour test ID=%d : %v", testID, err)
+		return nil, fmt.Errorf("durée invalide: %w", err)
+	}
+	log.Printf("⏳ Durée du test ID=%d convertie : %v", testID, config.Duration)
+
+	// Chargement du profil lié
+	profileQuery := `
         SELECT "ID", "profile_name", "packet_size", "time_between_attempts"
         FROM "test_profile"
         WHERE "ID" = $1
     `
-    var p Profile
-    var rawInterval string
-    var profileName string
+	var p Profile
+	var rawInterval string
+	var profileName string
 
-    err = db.QueryRowContext(ctx, profileQuery, config.ProfileID).Scan(&p.ID, &profileName, &p.PacketSize, &rawInterval)
-    if err != nil {
-        log.Printf("❌ Profil introuvable pour ID=%d : %v", config.ProfileID, err)
-        return nil, fmt.Errorf("profil introuvable pour ID: %d, erreur: %w", config.ProfileID, err)
-    }
-    p.SendingInterval, err = ParsePGInterval(rawInterval)
-    if err != nil {
-        log.Printf("❌ Durée invalide pour profil ID=%d : %v", p.ID, err)
-        return nil, fmt.Errorf("durée invalide pour profil: %w", err)
-    }
+	err = db.QueryRowContext(ctx, profileQuery, config.ProfileID).Scan(&p.ID, &profileName, &p.PacketSize, &rawInterval)
+	if err != nil {
+		log.Printf("❌ Profil introuvable pour ID=%d : %v", config.ProfileID, err)
+		return nil, fmt.Errorf("profil introuvable pour ID: %d, erreur: %w", config.ProfileID, err)
+	}
+	p.SendingInterval, err = ParsePGInterval(rawInterval)
+	if err != nil {
+		log.Printf("❌ Durée invalide pour profil ID=%d : %v", p.ID, err)
+		return nil, fmt.Errorf("durée invalide pour profil: %w", err)
+	}
 
-    log.Printf("✅ Profil chargé: ID=%d, Name=%s, PacketSize=%d, Interval=%v", p.ID, profileName, p.PacketSize, p.SendingInterval)
-    config.Profile = &p
+	log.Printf("✅ Profil chargé: ID=%d, Name=%s, PacketSize=%d, Interval=%v", p.ID, profileName, p.PacketSize, p.SendingInterval)
+	config.Profile = &p
 
-    // Chargement du seuil lié
-    thresholdQuery := `
-        SELECT "ID", "Name", "avg", "min", "max", "avg_status", "min_status", "avg_opr", "min_opr", "max_opr", "selected_metric"
-        FROM "Threshold"
-        WHERE "ID" = $1
-    `
-    var t Threshold
-    log.Printf("🔍 Requête du seuil ID=%d", config.ThresholdID)
-    err = db.QueryRowContext(ctx, thresholdQuery, config.ThresholdID).Scan(
-        &t.ID,
-        &t.Name,
-        &t.Avg,
-        &t.Min,
-        &t.Max,
-        &t.AvgStatus,
-        &t.MinStatus,
-        &t.AvgOpr,
-        &t.MinOpr,
-        &t.MaxOpr,
-        &t.SelectedMetric,
-    )
-    if err != nil {
-        log.Printf("❌ Seuil introuvable pour ID=%d : %v", config.ThresholdID, err)
-        return nil, fmt.Errorf("seuil introuvable pour ID: %d, erreur: %w", config.ThresholdID, err)
-    }
-    config.Threshold = &t
-    log.Printf("✅ Seuil chargé pour test ID=%d : %+v", testID, config.Threshold)
+	// Chargement des target_ids depuis test_targets
+targetQuery := `SELECT target_id FROM test_targets WHERE test_id = $1`
+rows, err := db.QueryContext(ctx, targetQuery, testID)
+if err != nil {
+    log.Printf("❌ Erreur récupération target_ids pour test_id=%d : %v", testID, err)
+    return nil, err
+}
+defer rows.Close()
 
-    log.Printf("🎉 Configuration complète du test ID=%d chargée avec succès", testID)
-    return &config, nil
+targetIDSet := make(map[int]struct{})
+if config.TargetID != 0 {
+    targetIDSet[config.TargetID] = struct{}{}
 }
 
+for rows.Next() {
+    var tid int
+    if err := rows.Scan(&tid); err != nil {
+        return nil, err
+    }
+    targetIDSet[tid] = struct{}{}
+}
+if err := rows.Err(); err != nil {
+    return nil, err
+}
+
+// Remplissage de la slice TargetAgentIDs sans doublons
+config.TargetAgentIDs = make([]int, 0, len(targetIDSet))
+for tid := range targetIDSet {
+    config.TargetAgentIDs = append(config.TargetAgentIDs, tid)
+}
+
+log.Printf("🎯 TargetAgentIDs pour test %d : %v", testID, config.TargetAgentIDs)
+
+// Si TargetID == 0 mais qu'on a des TargetAgentIDs, on récupère IP/port du premier
+if config.TargetID == 0 && len(config.TargetAgentIDs) > 0 {
+    firstTargetID := config.TargetAgentIDs[0]
+    var ip string
+    var port int
+    agentQuery := `SELECT "Address", "Port" FROM "Agent_List" WHERE "id" = $1`
+    err = db.QueryRowContext(ctx, agentQuery, firstTargetID).Scan(&ip, &port)
+    if err != nil {
+        log.Printf("❌ Erreur récupération IP/Port du target_id=%d: %v", firstTargetID, err)
+        return nil, fmt.Errorf("erreur récupération IP/Port target_id=%d: %w", firstTargetID, err)
+    }
+    config.TargetID = firstTargetID
+    config.TargetIP = strings.TrimSpace(ip)
+    config.TargetPort = port
+}
+
+log.Printf("🎉 Configuration complète du test ID=%d chargée avec succès", testID)
+
+	return &config, nil
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// / update etat **********
 func UpdateTestStatus(db *sql.DB, testID int, inProgress, failed, completed, errorFlag bool) error {
 	result, err := db.Exec(`
 		UPDATE test

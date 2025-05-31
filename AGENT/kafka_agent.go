@@ -15,12 +15,12 @@ import (
 var testQueue = make(chan TestConfig, 100)
 
 // Worker qui lance les tests un par un, dans l’ordre
-func testWorker(ctx context.Context, db *sql.DB) {
+func testWorker(ctx context.Context) {
 	for {
 		select {
 		case test := <-testQueue:
 			log.Printf("▶️ Worker démarre test %d", test.TestID)
-			Client(test, db) // fonction bloquante, exécute le test
+			Client(test) // fonction bloquante, exécute le test
 			log.Printf("🏁 Worker termine test %d", test.TestID)
 		case <-ctx.Done():
 			log.Println("⚠️ Worker arrêté par contexte")
@@ -40,8 +40,6 @@ func LaunchTest(test TestConfig) error {
 	}
 }
 
-// Kafka écouteur (modifié pour uniquement mettre en file)
-// Tu peux recevoir la config via Kafka, mais pas lancer direct Client
 func ListenToTestRequestsFromKafka(db *sql.DB) {
 	kafkaConfig := KafkaConfig{
 		Brokers:          []string{"localhost:9092"},
@@ -59,7 +57,7 @@ func ListenToTestRequestsFromKafka(db *sql.DB) {
 	ctx := context.Background()
 
 	// Démarrer le worker (exécution tests un par un)
-	go testWorker(ctx, db)
+	go testWorker(ctx)
 
 	for {
 		msg, err := reader.ReadMessage(ctx)
@@ -84,8 +82,6 @@ func ListenToTestRequestsFromKafka(db *sql.DB) {
 		}
 	}
 }
-
-
 
 type TestResult1 struct {
 	TestID         int     `json:"test_id"`

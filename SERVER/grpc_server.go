@@ -1,130 +1,126 @@
 package server
 
 import (
-	"fmt"
+    "context"
+    "time"
 	"log"
-	"net"
+    "google.golang.org/grpc"
+    "google.golang.org/grpc/credentials/insecure"
+	"strings"
 	"strconv"
-
-	"google.golang.org/grpc"
-
-	"mon-projet-go/testpb"
+    "mon-projet-go/testpb"
 )
 
-// *** Server démarre le serveur gRPC.
-func startGRPCServer() {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", AppConfig.GRPC.Port))
-	if err != nil {
-		log.Fatalf("Échec de l'écoute sur le port %d : %v", AppConfig.GRPC.Port, err)
-	}
 
-	grpcServer := grpc.NewServer()
-
-	// 1️⃣ Enregistrement du service QuickTest
-	testpb.RegisterTestServiceServer(grpcServer, &quickTestServer{})
-
-	// 2️⃣ Enregistrement du service HealthCheck
-	testpb.RegisterHealthServer(grpcServer, &healthServer{})
-
-	log.Printf("✅ Serveur gRPC lancé sur le port %d...\n", AppConfig.GRPC.Port)
-	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Erreur lors du lancement du serveur gRPC : %v", err)
-	}
+func convertToProtoProfile(p *Profile) *testpb.Profile {
+    if p == nil {
+        return nil
+    }
+    return &testpb.Profile{
+        Id:              int32(p.ID),
+        SendingInterval: int64(p.SendingInterval.Nanoseconds()), // conversion durée en nanosecondes
+        PacketSize:      int32(p.PacketSize),
+    }
 }
 
-// TestServiceServer
-type quickTestServer struct {
-	testpb.UnimplementedTestServiceServer
+// parseDuration convertit une chaîne comme "30s" ou "2m" en time.Duration
+func parseDuration(s string) time.Duration {
+    if strings.Count(s, ":") == 2 {
+        parts := strings.Split(s, ":")
+        h, _ := strconv.Atoi(parts[0])
+        m, _ := strconv.Atoi(parts[1])
+        sec, _ := strconv.Atoi(parts[2])
+        totalSeconds := h*3600 + m*60 + sec
+        return time.Duration(totalSeconds) * time.Second
+    }
+
+    d, err := time.ParseDuration(s)
+    if err != nil {
+        log.Printf("⚠️ Erreur de parsing de durée '%s' : %v", s, err)
+        return 0
+    }
+    return d
 }
 
-func convertTestIDToInt(testID string) (int, error) {
-	return strconv.Atoi(testID)
+
+func convertToProtoConfig(cfg *FullTestConfiguration) *testpb.TestConfig {
+    duration := parseDuration(cfg.RawDuration).Nanoseconds()
+
+    log.Printf("🔧 [SERVER] FullTestConfiguration reçu : %+v", cfg)
+
+    var protoProfile *testpb.Profile
+    if cfg.Profile != nil {
+        protoProfile = convertToProtoProfile(cfg.Profile)
+        log.Printf("📦 [SERVER] Profil converti en proto : %+v", protoProfile)
+    } else {
+        log.Println("⚠️ [SERVER] Avertissement : cfg.Profile est nil")
+    }
+
+    protoConfig := &testpb.TestConfig{
+        TestId:         int32(cfg.TestID),
+        Name:           cfg.Name,
+        Duration:       duration,
+        NumberOfAgents: int32(cfg.NumberOfAgents),
+        SourceId:       int32(cfg.SourceID),
+        SourceIp:       cfg.SourceIP,
+        SourcePort:     int32(cfg.SourcePort),
+        TargetId:       int32(cfg.TargetID),
+        TargetIp:       cfg.TargetIP,
+        TargetPort:     int32(cfg.TargetPort),
+        ProfileId:      int32(cfg.ProfileID),
+        Profile:        protoProfile,
+    }
+
+    log.Printf("📨 [SERVER] TestConfig prêt à l'envoi : %+v", protoConfig)
+
+    return protoConfig
 }
 
-func (s *quickTestServer) RunQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
-	log.Println("💡 Lancement du Quick Test sur le serveur...")
 
-	// 1️⃣ Recevoir test_id
-	in, err := stream.Recv()
-	if err != nil {
-		log.Printf("❌ Erreur lors de la réception initiale: %v", err)
-		return err
-	}
 
-	req, ok := in.Message.(*testpb.QuickTestMessage_Request)
-	if !ok {
-		return fmt.Errorf("❌ Message initial invalide, QuickTestRequest attendu")
-	}
-	testID := req.Request.TestId
-	log.Printf("📥 Test ID reçu : %s", testID)
+// Envoie la config à un agent donné (client gRPC vers agent)
+func sendTestConfigToAgent(agentAddress string, config *testpb.TestConfig, testID string) error {
+    conn, err := grpc.Dial(agentAddress, grpc.WithTransportCredentials(insecure.NewCredentials()))
+    if err != nil {
+        return err
+    }
+    defer conn.Close()
 
-	// 2️⃣ Charger la configuration de test
-	db, err := InitDB()
-	if err != nil {
-		return fmt.Errorf("❌ Connexion BDD échouée: %v", err)
-	}
-	defer db.Close()
+    client := testpb.NewTestServiceClient(conn)
 
-	testIDInt, err := convertTestIDToInt(testID)
-	if err != nil {
-		return fmt.Errorf("❌ Test ID invalide : %v", err)
-	}
+    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+    defer cancel()
 
-	config, err := LoadFullTestConfiguration(db, testIDInt)
-	if err != nil {
-		return fmt.Errorf("❌ Erreur chargement config test : %v", err)
-	}
+    req := &testpb.QuickTestMessage{
+        Message: &testpb.QuickTestMessage_Request{
+            Request: &testpb.QuickTestRequest{
+                TestId: testID,
+                Config: config,
+            },
+        },
+    }
 
-	// 3️⃣ Créer les paramètres à envoyer
-	parameters := &testpb.TestParameters{
-		SourceIp:       config.SourceIP,
-		SourcePort:     int32(config.SourcePort),
-		TargetIp:       config.TargetIP,
-		TargetPort:     int32(config.TargetPort),
-		DurationSec:    int32(config.Duration.Seconds()),
-		PacketSize:     int32(config.Profile.PacketSize),
-		IntervalMillis: int32(config.Profile.SendingInterval.Milliseconds()),
-	}
+    stream, err := client.PerformQuickTest(ctx)
+    if err != nil {
+        return err
+    }
 
-	// 4️⃣ Envoyer QuickTestRequest à l'agent
-	err = stream.Send(&testpb.QuickTestMessage{
-		Message: &testpb.QuickTestMessage_Request{
-			Request: &testpb.QuickTestRequest{
-				TestId:     testID,
-				Parameters: parameters,
-			},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("❌ Erreur d'envoi de QuickTestRequest : %v", err)
-	}
+    log.Printf("🚀 [SERVER] Envoi d'une requête vers %s : %+v", agentAddress, req)
+    if err := stream.Send(req); err != nil {
+        return err
+    }
 
-	// 5️⃣ Attendre les résultats
-	for {
-		in, err := stream.Recv()
-		if err != nil {
-			return fmt.Errorf("❌ Erreur de réception du résultat : %v", err)
-		}
+    // Important : attendre une réponse de l'agent
+    resp, err := stream.Recv()
+    if err != nil {
+        log.Printf("❌ Erreur lors de la lecture de la réponse : %v", err)
+        return err
+    }
+    log.Printf("✅ Réponse reçue de l'agent : %+v", resp)
 
-		if res, ok := in.Message.(*testpb.QuickTestMessage_Response); ok {
-			log.Printf("✅ Résultats reçus : Latence=%.2f ms, Jitter=%.2f ms, Débit=%.2f kbps",
-				res.Response.LatencyMs, res.Response.JitterMs, res.Response.ThroughputKbps)
-
-			// 6️⃣ Sauvegarder les résultats
-			err := SaveAttemptResult(db, int64(testIDInt), res.Response.LatencyMs, res.Response.JitterMs, res.Response.ThroughputKbps)
-			if err != nil {
-				log.Printf("⚠️ Erreur sauvegarde résultat : %v", err)
-			}
-
-			// 7️⃣ Mise à jour du statut
-			err = UpdateTestStatus(db, testIDInt, false, false, true, false )
-			if err != nil {
-				log.Printf("⚠️ Erreur mise à jour statut : %v", err)
-			}
-
-			break // on sort après réception d'un seul résultat
-		}
-	}
-
-	return nil
+    // Ferme proprement l'envoi après avoir reçu une réponse
+    return stream.CloseSend()
 }
+
+
+

@@ -5,6 +5,16 @@ import (
 	"github.com/lib/pq"
 	
 )
+/////////////////////
+type TestKafkaMessage struct {
+	TestID     int           `json:"test_id"`
+	TestType   string        `json:"test_type"`    
+	Sender     string        `json:"sender"`      
+	Reflectors []string      `json:"reflectors"`  
+	Profile    *testProfile  `json:"profile"`     
+}
+////////////////////////////
+
 
 
 type Agent struct {
@@ -73,6 +83,8 @@ type PlannedTest struct {
 	Failed       bool         `json:"failed"`         
 	Completed    bool          `json:"completed"`	
 	Error        bool            `json:"Error"`
+	TargetAgentIDs []int `json:"target_ids,omitempty"`
+
 }
 
 type TestStatus struct {
@@ -142,27 +154,51 @@ type Profile struct {
 }
 
 type FullTestConfiguration struct {
-    TestID          int
-    Name            string
-    TestType        string
-    RawDuration     string
-    NumberOfAgents  int
-    SourceID        int
-    SourceIP        string
-    SourcePort      int
-    TargetID        int
-    TargetIP        string
-    TargetPort      int
-    ProfileID       int
-    ThresholdID     int
-    InProgress      bool
-    Failed          bool
-    Completed       bool
-    Error           bool
-    Duration        time.Duration
-    Profile         *Profile
-    Threshold       *Threshold
+    TestID          int           `json:"test_id"`
+    Name            string        `json:"name"`
+    TestType        string        `json:"test_type"`
+    RawDuration     string        `json:"raw_duration"`
+    NumberOfAgents  int           `json:"number_of_agents"`
+    SourceID        int           `json:"source_id"`
+    SourceIP        string        `json:"source_ip"`
+    SourcePort      int           `json:"source_port"`
+    TargetID        int           `json:"target_id"`
+    TargetIP        string        `json:"target_ip"`
+    TargetPort      int           `json:"target_port"`
+    ProfileID       int           `json:"profile_id"`
+    Duration        time.Duration `json:"duration"`
+    Profile         *Profile      `json:"profile"`
+  
+    TargetAgentIDs  []int         `json:"target_ids,omitempty"`
+    //Agents          []AgentRole   `json:"agents,omitempty"`
+    //Role            string        `json:"role"`
 }
+
+
+type MinimalTestConfiguration struct {
+    TestID          int           `json:"test_id"`
+    Duration        time.Duration `json:"duration"`
+    SourceIP        string        `json:"source_ip"`
+    SourcePort      int           `json:"source_port"`
+    TargetIP        string        `json:"target_ip"`
+    TargetPort      int           `json:"target_port"`
+    PacketSize      int           `json:"packet_size"`
+    SendingInterval time.Duration `json:"sending_interval"`
+}
+
+func NewMinimalConfig(full *FullTestConfiguration) *MinimalTestConfiguration {
+    return &MinimalTestConfiguration{
+        TestID:          full.TestID,
+        Duration:        full.Duration,
+        SourceIP:        full.SourceIP,
+        SourcePort:      full.SourcePort,
+        TargetIP:        full.TargetIP,
+        TargetPort:      full.TargetPort,
+        PacketSize:      full.Profile.PacketSize,
+        SendingInterval: full.Profile.SendingInterval,
+    }
+}
+
 
 
 

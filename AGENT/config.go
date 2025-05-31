@@ -9,17 +9,18 @@ import (
 )
 
 type Config struct {
+	// Nouveaux champs ajoutés ici
+	AgentID   int    `yaml:"agent_id"`
+	AgentRole string `yaml:"agent_role"` // "sender" ou "reflector"
+
 	Server struct {
-			Address  string `yaml:"address"`
-			Protocol string `yaml:"protocol"`
-			
+		Address  string `yaml:"address"`
+		Protocol string `yaml:"protocol"`
 	} `yaml:"server"`
 
-			
 	Server1 struct {
 		Main string `yaml:"main"`
 	} `yaml:"server1"`
-
 
 	Sender struct {
 		ID   string `yaml:"id"`
@@ -37,13 +38,13 @@ type Config struct {
 	} `yaml:"grpc"`
 
 	Network struct {
-		ServerAddress string `yaml:"server_address"`
-		ServerPort    int    `yaml:"server_port"`
-		SenderPort    int    `yaml:"sender_port"`
-		ReceiverPort  int    `yaml:"receiver_port"`
-		ListenPort int           `yaml:"listen_port"`
-		PacketSize int           `yaml:"packet_size"`
-		Timeout    time.Duration `yaml:"timeout"`
+		ServerAddress string        `yaml:"server_address"`
+		ServerPort    int           `yaml:"server_port"`
+		//SenderPort    int           `yaml:"sender_port"`
+		ReceiverPort  int           `yaml:"receiver_port"`
+		ListenPort    int           `yaml:"listen_port"`
+		PacketSize    int           `yaml:"packet_size"`
+		Timeout       time.Duration `yaml:"timeout"`
 	} `yaml:"network"`
 
 	DefaultTest struct {
@@ -54,17 +55,17 @@ type Config struct {
 	} `yaml:"default_test"`
 
 	Kafka struct {
-		Brokers           []string `yaml:"brokers"`
-		TestRequestTopic  string   `yaml:"test_request_topic"`
-		TestResultTopic   string   `yaml:"test_result_topic"`
-		GroupID           string   `yaml:"group_id"`
+		Brokers          []string `yaml:"brokers"`
+		TestRequestTopic string   `yaml:"test_request_topic"`
+		TestResultTopic  string   `yaml:"test_result_topic"`
+		GroupID          string   `yaml:"group_id"`
 	} `yaml:"kafka"`
 
 	WebSocket struct {
 		URL string `yaml:"url"`
-	} `yaml:"websocket"` 
-}
+	} `yaml:"websocket"`
 
+}
 
 var AppConfig Config
 

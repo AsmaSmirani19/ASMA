@@ -32,6 +32,8 @@ func TriggerTestToKafka(db *sql.DB, testID int) error {
     if err != nil {
         return fmt.Errorf("❌ Erreur chargement config test : %v", err)
     }
+    log.Printf("🔍 DEBUG Config chargée depuis BDD : %+v", config)
+
 
     // Vérifier que le profil est bien chargé
     if config.Profile == nil {
@@ -68,7 +70,7 @@ type TestResult1 struct {
 // db est ta connexion globale ou passée en paramètre à la fonction
 var db *sql.DB
 
-func ConsumeTestResults(ctx context.Context, brokers []string, topic, groupID string) {
+func ConsumeTestResults(ctx context.Context, brokers []string, topic string, groupID string, db *sql.DB) {
     // Création d'un reader Kafka (consommateur)
     r := kafka.NewReader(kafka.ReaderConfig{
         Brokers:  brokers,
@@ -100,10 +102,9 @@ func ConsumeTestResults(ctx context.Context, brokers []string, topic, groupID st
             continue
         }
 
-        // Sauvegarder en base
-       if err := SaveAttemptResult(db, int64(result.TestID), result.LatencyMs, result.JitterMs, result.ThroughputKbps); err != nil {
-   		 log.Printf("❌ Erreur sauvegarde en base : %v", err)
-		
+       // Sauvegarde dans la base
+        if err := SaveAttemptResult(db, int64(result.TestID), result.LatencyMs, result.JitterMs, result.ThroughputKbps); err != nil {
+            log.Printf("❌ Erreur sauvegarde en base : %v", err)
         } else {
             log.Printf("✅ Résultat TestID %d sauvegardé en base", result.TestID)
         }

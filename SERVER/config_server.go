@@ -42,10 +42,10 @@ type Config struct {
 		Parameters string `yaml:"parameters"`
 	} `yaml:"quick_test"`
 
-		GRPC struct {
+	GRPC struct {
 			Address string `yaml:"address"`
 			Port    int    `yaml:"port"`
-		} `yaml:"grpc"`
+	} `yaml:"grpc"`
 	
 	WebSocket struct {
 		Address string `yaml:"address"`

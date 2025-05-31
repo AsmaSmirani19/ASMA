@@ -12,11 +12,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"context"
+
 
 	_ "github.com/lib/pq"
-	"google.golang.org/grpc"
-	"mon-projet-go/testpb"
+	
 	
 )
 
@@ -101,8 +100,9 @@ func triggerTestHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var req struct {
-			TestID int `json:"test_id"`
-			ID     int `json:"id"`
+			TestID    int   `json:"test_id"`
+			ID        int   `json:"id"`
+			TargetIDs []int `json:"target_ids,omitempty"` // plus nécessaire ici, mais pas grave s’il est encore dans le JSON
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -129,7 +129,8 @@ func triggerTestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		log.Printf("🧪 Type de test reçu depuis config : '%s'", testConfig.TestType)
-		
+		log.Printf("🎯 Cibles chargées depuis la base : %v", testConfig.TargetAgentIDs)
+
 		switch testConfig.TestType {
 		case "planned_test":
 			log.Println("📤 Envoi du test planned à Kafka")
@@ -152,58 +153,38 @@ func triggerTestHandler(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
+		case "quick_test":
+			log.Println("⚡ Démarrage du Quick Test via gRPC Client...")
+
+			address := fmt.Sprintf("%s:%d", testConfig.SourceIP, testConfig.SourcePort)		
+			testIDStr := strconv.Itoa(testConfig.TestID)
+
 		
-        case "quick_test":
-            log.Println("⚡ Démarrage du Quick Test via gRPC Client...")
+			protoConfig := convertToProtoConfig(testConfig)
+	        err := sendTestConfigToAgent(address, protoConfig, testIDStr)
 
-            // CONSTRUCTION DE L'ADRESSE AGENT
-            address := fmt.Sprintf("%s:%d", testConfig.SourceIP, testConfig.SourcePort)
-            conn, err := grpc.Dial(address, grpc.WithInsecure())
-            if err != nil {
-                log.Printf("❌ Connexion à l'agent %s échouée: %v", address, err)
-                http.Error(w, "Connexion à l'agent échouée", http.StatusInternalServerError)
-                return
-            }
-            defer conn.Close()
+			if err != nil {
+				log.Printf("❌ Erreur envoi config à l'agent %s : %v", address, err)
+				http.Error(w, "Erreur d’envoi du test", http.StatusInternalServerError)
+				return
+			}
 
-            client := testpb.NewTestServiceClient(conn)
-            stream, err := client.PerformQuickTest(context.Background())
-            if err != nil {
-                log.Printf("❌ Erreur ouverture du stream gRPC: %v", err)
-                http.Error(w, "Erreur gRPC", http.StatusInternalServerError)
-                return
-            }
+				default:
+					log.Printf("❌ Type de test inconnu : %s", testConfig.TestType)
+					http.Error(w, "Type de test inconnu", http.StatusBadRequest)
+					return
+					}
 
-            // UTILISER TestID et NON ID
-            testIDStr := strconv.Itoa(testConfig.TestID)
-            if err := stream.Send(&testpb.QuickTestMessage{
-                Message: &testpb.QuickTestMessage_Request{
-                    Request: &testpb.QuickTestRequest{TestId: testIDStr},
-                },
-            }); err != nil {
-                log.Printf("❌ Erreur envoi TestID: %v", err)
-                http.Error(w, "Erreur d’envoi du test", http.StatusInternalServerError)
-                return
-            }
-
-            // ... réception du résultat inchangée ...
-
-        default:
-            log.Printf("❌ Type de test inconnu : %s", testConfig.TestType)
-            http.Error(w, "Type de test inconnu", http.StatusBadRequest)
-            return
-        }
-
-        // Réponse HTTP finale
-        w.Header().Set("Content-Type", "application/json")
-        json.NewEncoder(w).Encode(map[string]interface{}{
-            "status":  "success",
-            "message": "Test déclenché avec succès",
-            "test_id": effectiveID,
-            "type":    testConfig.TestType,
-        })
-        log.Printf("✅ Test %d (%s) déclenché avec succès", effectiveID, testConfig.TestType)
-    }
+				// ✅ Réponse HTTP finale
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"status":  "success",
+					"message": "Test déclenché avec succès",
+					"test_id": effectiveID,
+					"type":    testConfig.TestType,
+				})
+				log.Printf("✅ Test %d (%s) déclenché avec succès", effectiveID, testConfig.TestType)
+	}
 }
 
 
