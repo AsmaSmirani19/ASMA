@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	
-	"encoding/json"
+	
 	"fmt"
 	"log"
 
@@ -13,7 +13,6 @@ import (
 	"strings"
 
 
-	"github.com/segmentio/kafka-go"
 	"github.com/rs/cors"	
 )
 
@@ -55,34 +54,7 @@ type TestResult struct {
 	Throughput float64
 }
 
-func listenToTestResultsAndStore(db *sql.DB) {
-	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{"localhost:9092"},
-		Topic:   "test-results",
-		GroupID: "backend-group",
-	})
-	defer reader.Close()
 
-	for {
-		msg, err := reader.ReadMessage(context.Background())
-		if err != nil {
-			log.Printf("Erreur Kafka : %v", err)
-			continue
-		}
-
-		var result TestResult
-		if err := json.Unmarshal(msg.Value, &result); err != nil {
-			log.Printf("Erreur JSON : %v", err)
-			continue
-		}
-
-		if err := saveResultsToDB(db, QoSMetrics{}); err != nil {
-			log.Printf("Erreur DB : %v", err)
-		} else {
-			log.Printf("Résultat stocké avec succès : %+v", result)
-		}
-	}
-}
 
 
 func Start(db *sql.DB) {
@@ -145,7 +117,6 @@ func Start(db *sql.DB) {
 	agentService.CheckAllAgents()
 
 	// 🎧 8. Écoute active des résultats TWAMP
-	go listenToTestResultsAndStore(db)
 
 	// 🛑 9. Blocage principal pour garder le serveur actif
 	select {}

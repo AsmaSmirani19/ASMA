@@ -11,28 +11,9 @@ import(
 	//"github.com/gorilla/websocket"
 
 )
-
-
-func SendTCPPacket(packet []byte, addr string, port int) error {
-
-	timeout := 5 * time.Second
-
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("[%s]:%d", addr, port), timeout)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	_, err = conn.Write(packet)
-	if err != nil {
-		return fmt.Errorf("échec d'envoi du paquet: %w", err)
-	}
-	return nil
-}
-
-
 func Client(config TestConfig) error {
 	log.Println("🔵 [Client] Début d'exécution du client...")
+	
 
 	serverAddress := AppConfig.Network.ServerAddress
 	serverPort := AppConfig.Network.ServerPort

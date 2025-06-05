@@ -8,6 +8,7 @@ import (
 	"mon-projet-go/testpb"
 	"google.golang.org/grpc"
 	"errors"
+	"io"
 
 )
 
@@ -59,11 +60,12 @@ func ConvertProtoProfileToGo(protoProfile *testpb.Profile) *Profile {
 
 // ConvertProtoConfigToGo convertit la config protobuf en struct Go native
 func ConvertProtoConfigToGo(protoConfig *testpb.TestConfig) TestConfig {
-	config := TestConfig{
+	profile := ConvertProtoProfileToGo(protoConfig.Profile)
+
+	return TestConfig{
 		TestID:         int(protoConfig.TestId),
 		Name:           protoConfig.Name,
 		Duration:       protoConfig.Duration,
-
 		NumberOfAgents: int(protoConfig.NumberOfAgents),
 		SourceID:       int(protoConfig.SourceId),
 		SourceIP:       protoConfig.SourceIp,
@@ -71,14 +73,12 @@ func ConvertProtoConfigToGo(protoConfig *testpb.TestConfig) TestConfig {
 		TargetID:       int(protoConfig.TargetId),
 		TargetIP:       protoConfig.TargetIp,
 		TargetPort:     int(protoConfig.TargetPort),
-		ProfileID:      int(protoConfig.ProfileId),
-		Profile:        ConvertProtoProfileToGo(protoConfig.Profile),
+		ProfileID:      profile.ID, // ou protoConfig.Profile.Id si tu veux garder tel quel
+		Profile:        profile,
 	}
-
-	log.Printf("🧪 Agent : Config convertie : %+v, Profile nil ? %v", config, protoConfig.Profile == nil)
-
-	return config
 }
+
+
 
 func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
 	log.Println("🟢 Agent : connexion de test rapide reçue")
@@ -86,6 +86,10 @@ func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTest
 	for {
 		in, err := stream.Recv()
 		if err != nil {
+			if err == io.EOF {
+				log.Println("🔚 Agent : fin normale du stream (EOF)")
+				return nil
+			}
 			log.Printf("❌ Agent : erreur réception message : %v", err)
 			return err
 		}
@@ -104,7 +108,7 @@ func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTest
 			if cmd.Config.Profile == nil {
 				errMsg := "config reçue, mais Profile est nil, test non lancé"
 				log.Printf("❌ %s", errMsg)
-				continue // ou return selon ton besoin
+				continue
 			}
 
 			config := ConvertProtoConfigToGo(cmd.Config)
@@ -132,6 +136,7 @@ func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTest
 		}
 	}
 }
+
 
 
 

@@ -88,7 +88,6 @@ func (s *AgentService) CheckAllAgents() {
 
 var tests = []Test{}
 var mu sync.Mutex
-
 func triggerTestHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		enableCORS(w, r)
@@ -100,9 +99,8 @@ func triggerTestHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		var req struct {
-			TestID    int   `json:"test_id"`
-			ID        int   `json:"id"`
-			TargetIDs []int `json:"target_ids,omitempty"` // plus nécessaire ici, mais pas grave s’il est encore dans le JSON
+			TestID int `json:"test_id"`
+			ID     int `json:"id"` // compatibilité avec ancien champ
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -121,71 +119,74 @@ func triggerTestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("🔍 Recherche config pour test ID: %d", effectiveID)
+		// ✅ Charger la config pour obtenir le type de test
 		testConfig, err := LoadFullTestConfiguration(db, effectiveID)
 		if err != nil {
 			log.Printf("❌ Erreur GetTestConfig: %v", err)
 			http.Error(w, "Configuration de test introuvable", http.StatusNotFound)
 			return
 		}
-		log.Printf("🧪 Type de test reçu depuis config : '%s'", testConfig.TestType)
-		log.Printf("🎯 Cibles chargées depuis la base : %v", testConfig.TargetAgentIDs)
 
 		switch testConfig.TestType {
 		case "planned_test":
-			log.Println("📤 Envoi du test planned à Kafka")
-			configJSON, err := json.Marshal(testConfig)
-			if err != nil {
-				log.Printf("❌ Erreur JSON: %v", err)
-				http.Error(w, "Erreur interne", http.StatusInternalServerError)
-				return
-			}
+			
+		var targetCount int
+		err := db.QueryRow("SELECT COUNT(*) FROM test_targets WHERE test_id = $1", effectiveID).Scan(&targetCount)
+		if err != nil {
+			log.Printf("❌ Erreur lors du comptage des targets : %v", err)
+			http.Error(w, "Erreur interne", http.StatusInternalServerError)
+			return
+		}
 
-			err = SendMessageToKafka(
-				AppConfig.Kafka.Brokers,
-				AppConfig.Kafka.TestRequestTopic,
-				"test",
-				string(configJSON),
-			)
-			if err != nil {
-				log.Printf("❌ Envoi Kafka échoué: %v", err)
-				http.Error(w, "Erreur Kafka", http.StatusInternalServerError)
+		if targetCount <= 1 {
+			log.Println("📤 Déclenchement test planned SIMPLE via TriggerTestToKafka")
+			if err := TriggerTestToKafka(db, effectiveID); err != nil {
+				log.Printf("❌ Erreur envoi Kafka : %v", err)
+				http.Error(w, "Erreur lors de l’envoi du test planned", http.StatusInternalServerError)
 				return
 			}
+		} else {
+			log.Println("📤 Déclenchement test planned GROUPE via TriggerAgentToGroupTest")
+			brokers := AppConfig.Kafka.Brokers
+			topic := AppConfig.Kafka.TestRequestTopic
+
+			if err := TriggerAgentToGroupTest(db, brokers, topic, effectiveID); err != nil {
+				log.Printf("❌ Erreur envoi Kafka : %v", err)
+				http.Error(w, "Erreur lors de l’envoi du test groupé", http.StatusInternalServerError)
+				return
+			}
+		}
 
 		case "quick_test":
 			log.Println("⚡ Démarrage du Quick Test via gRPC Client...")
-
-			address := fmt.Sprintf("%s:%d", testConfig.SourceIP, testConfig.SourcePort)		
+			address := fmt.Sprintf("%s:%d", testConfig.SourceIP, testConfig.SourcePort)
 			testIDStr := strconv.Itoa(testConfig.TestID)
-
-		
 			protoConfig := convertToProtoConfig(testConfig)
-	        err := sendTestConfigToAgent(address, protoConfig, testIDStr)
 
-			if err != nil {
+			if err := sendTestConfigToAgent(address, protoConfig, testIDStr); err != nil {
 				log.Printf("❌ Erreur envoi config à l'agent %s : %v", address, err)
-				http.Error(w, "Erreur d’envoi du test", http.StatusInternalServerError)
+				http.Error(w, "Erreur d’envoi du test quick", http.StatusInternalServerError)
 				return
 			}
 
-				default:
-					log.Printf("❌ Type de test inconnu : %s", testConfig.TestType)
-					http.Error(w, "Type de test inconnu", http.StatusBadRequest)
-					return
-					}
+		default:
+			log.Printf("❌ Type de test inconnu : %s", testConfig.TestType)
+			http.Error(w, "Type de test inconnu", http.StatusBadRequest)
+			return
+		}
 
-				// ✅ Réponse HTTP finale
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"status":  "success",
-					"message": "Test déclenché avec succès",
-					"test_id": effectiveID,
-					"type":    testConfig.TestType,
-				})
-				log.Printf("✅ Test %d (%s) déclenché avec succès", effectiveID, testConfig.TestType)
+		// ✅ Réponse HTTP finale
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "success",
+			"message": "Test déclenché avec succès",
+			"test_id": effectiveID,
+			"type":    testConfig.TestType,
+		})
+		log.Printf("✅ Test %d (%s) déclenché avec succès", effectiveID, testConfig.TestType)
 	}
 }
+
 
 
 // Route GET pour récupérer les résultats des tests

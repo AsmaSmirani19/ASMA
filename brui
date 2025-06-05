@@ -196,3 +196,37 @@ func NewMinimalConfig(full *FullTestConfiguration) *MinimalTestConfiguration {
         SendingInterval: full.Profile.SendingInterval,
     }
 }
+
+
+
+type AgentRole struct {
+	ID        int      `json:"id"`
+	Role      string   `json:"role"`
+	TargetIDs []int    `json:"target_ids,omitempty"`
+	IP        string   `json:"ip"`   // Ajout nécessaire
+	Port      int      `json:"port"` // Ajout nécessaire
+}
+
+
+func saveResultsToDB(db *sql.DB, qos QoSMetrics) error {
+	_, err := db.Exec(`
+		INSERT INTO "Test_Results"
+			packet_loss_percent,
+			avg_latency_ms,
+			avg_jitter_ms,
+			avg_throughput_kbps,
+			total_jitter
+		) VALUES ($1, $2, $3, $4, $5)`,
+		qos.PacketLossPercent,
+		qos.AvgLatencyMs,
+		qos.AvgJitterMs,
+		qos.AvgThroughputKbps,
+		qos.TotalJitter,
+	)
+	if err != nil {
+		log.Println("Erreur insertion dans DB :", err)
+	} else {
+		log.Println("Résultat inséré avec succès !")
+	}
+	return err
+}

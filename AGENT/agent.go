@@ -11,30 +11,13 @@ import (
 	"encoding/json"
 
 
-
 	_ "github.com/lib/pq"
 	"github.com/gorilla/websocket"
 )
 
-// Envoi d'un paquet UDP
-func SendPacket(packet []byte, addr string, port int) error {
-	remoteAddr := &net.UDPAddr{
-		IP:   net.ParseIP(addr),
-		Port: port,
-	}
-	conn, err := net.DialUDP("udp", nil, remoteAddr)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	_, err = conn.Write(packet)
-	return err
-}
-
 // Réception d'un paquet UDP
 func receivePacket(conn *net.UDPConn) ([]byte, error) {
-    conn.SetReadDeadline(time.Now().Add(2 * time.Second)) // timeout 2s
+    conn.SetReadDeadline(time.Now().Add(5 * time.Second)) // timeout 2s
     buffer := make([]byte, AppConfig.Network.PacketSize)
     n, _, err := conn.ReadFromUDP(buffer)
     if err != nil {
@@ -59,25 +42,28 @@ func receivePacket(conn *net.UDPConn) ([]byte, error) {
 }
 
 
-func StartTest( config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
+func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
     log.Printf("🚀 [Client] Lancement du test ID %d...", config.TestID)
 
-	// Vérification que l'IP et le port cible sont valides
+    // Étape 0 : Vérification des paramètres de configuration
+    if config.TargetIP == "" || config.TargetPort == 0 {
+        log.Println("❌ ERREUR CRITIQUE : IP ou Port cible manquant dans la configuration.")
+        if ws != nil {
+            _ = sendTestStatus(ws, config.TestID, "failed")
+        }
+        return nil, nil, fmt.Errorf("IP ou Port cible manquant : IP=%q, Port=%d", config.TargetIP, config.TargetPort)
+    }
 
-	if config.TargetIP == "" || config.TargetPort == 0 {
-		log.Println("❌ ERREUR CRITIQUE : IP ou Port cible manquant dans la configuration.")
-		if ws != nil {
-			_ = sendTestStatus(ws, config.TestID, "failed")
-		}
-		return nil, nil, fmt.Errorf("IP ou Port cible manquant : IP=%q, Port=%d", config.TargetIP, config.TargetPort)
-	}
+    // Étape 1 : Parse de la durée
+    log.Printf("Durée brute (secondes) : %d", config.Duration)
+	
+	duration := time.Duration(config.Duration) // déjà en ns
 
-    // Étape 1 : Parse la durée
-    duration := time.Duration(config.Duration)
+	log.Printf("Durée convertie : %v", duration)
 
-    // Étape 3 : Initialisation
-    log.Println("⚙️ Étape 3 : Initialisation des structures de métriques...")
 
+    // Étape 2 : Initialisation des structures
+    log.Println("⚙️ Étape 2 : Initialisation des structures de métriques...")
     stats := &PacketStats{
         StartTime:      time.Now(),
         TargetAddress:  config.TargetIP,
@@ -87,13 +73,12 @@ func StartTest( config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetric
     }
     qos := &QoSMetrics{}
 
+    // Étape 3 : Création du socket UDP
+    log.Println("🔌 Étape 3 : Création du socket UDP...")
     localAddr := &net.UDPAddr{
         IP:   net.ParseIP(config.SourceIP),
         Port: config.SourcePort,
     }
-
-    // Étape 4 : Création du socket UDP
-    log.Println("🔌 Étape 4 : Création du socket UDP...")
     conn, err := net.ListenUDP("udp", localAddr)
     if err != nil {
         return nil, nil, fmt.Errorf("❌ Échec de l'ouverture du socket UDP (%s:%d) : %v",
@@ -102,40 +87,35 @@ func StartTest( config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetric
     defer conn.Close()
     log.Printf("✅ Socket bindé sur %s:%d", config.SourceIP, config.SourcePort)
 
-    // Étape 5 : Lancement de la boucle d'envoi des paquets
-    log.Println("🚀 Étape 5 : Lancement de la boucle d'envoi des paquets...")
-
+    // Étape 4 : Notification WebSocket de début de test
     if ws != nil {
         log.Println("📤 Envoi du statut 'running' via WebSocket...")
         if err := sendTestStatus(ws, config.TestID, "In progress"); err != nil {
             log.Printf("❌ Erreur envoi statut running: %v", err)
         }
-
-        err := ws.WriteMessage(websocket.TextMessage, []byte("🟢 WS Test commencé"))
-        if err != nil {
+        if err := ws.WriteMessage(websocket.TextMessage, []byte("🟢 WS Test commencé")); err != nil {
             log.Printf("❌ Impossible d'écrire sur WebSocket: %v", err)
         } else {
             log.Println("✅ Test de WebSocket : message envoyé")
         }
     }
 
-    testEnd := stats.StartTime.Add(duration)
-
+    // Étape 5 : Boucle d'envoi des paquets
     if config.Profile == nil {
         log.Println("❌ Erreur : config.Profile est nil")
         return nil, nil, fmt.Errorf("config.Profile est nil")
     }
+    intervalDuration := time.Duration(config.Profile.SendingInterval)
+    log.Printf("⏳ Intervalle entre paquets : %v", intervalDuration)
 
-    intervalMs := config.Profile.SendingInterval
-    intervalDuration := time.Duration(intervalMs)
-
+    testEnd := stats.StartTime.Add(duration)
+    log.Println("🚀 Étape 5 : Lancement de la boucle d'envoi des paquets...")
     for time.Now().Before(testEnd) {
+        log.Println("🔄 Envoi paquet UDP...")
         if err := handleSender(stats, qos, conn, ws); err != nil {
             log.Printf("❌ Erreur dans handleSender : %v", err)
             if ws != nil {
-                if err := sendTestStatus(ws, config.TestID, "failed"); err != nil {
-                    log.Printf("❌ Erreur envoi statut failed: %v", err)
-                }
+                _ = sendTestStatus(ws, config.TestID, "failed")
             }
             return nil, nil, err
         }
@@ -172,10 +152,9 @@ func StartTest( config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetric
     SetLatestMetrics(qos)
     log.Printf("✅ Métriques calculées : %+v", qos)
 
-    // === Intégration Kafka ===
-    kafkaBrokers := []string{"localhost:9092"} // ou à prendre dans ta config
+    // Étape 7 : Envoi Kafka
+    kafkaBrokers := []string{"localhost:9092"}
     kafkaTopic := "test-results"
-
     result := TestResult1{
         TestID:         config.TestID,
         LatencyMs:      qos.AvgLatencyMs,
@@ -185,12 +164,11 @@ func StartTest( config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetric
 
     if err := sendTestResultKafka(kafkaBrokers, kafkaTopic, result); err != nil {
         log.Printf("❌ Erreur lors de l'envoi Kafka du résultat : %v", err)
-        // Optionnel : gérer l'erreur (stopper test, retry, etc.)
     } else {
         log.Printf("✅ Résultat Kafka envoyé pour TestID %d", config.TestID)
     }
 
-    // Étape 7 : Fin du test, envoi statut "finished" via WS
+    // Étape 8 : Fin du test
     if ws != nil {
         log.Println("📤 Envoi du statut 'finished' via WebSocket...")
         if err := sendTestStatus(ws, config.TestID, "completed"); err != nil {
@@ -201,6 +179,7 @@ func StartTest( config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetric
     log.Println("✅ Test terminé avec succès.")
     return stats, qos, nil
 }
+
 
 // Fonction utilitaire pour calculer la valeur absolue
 func abs(x int64) int64 {
@@ -356,7 +335,7 @@ func handleSender(stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, wsConn
 
 func handleReflector(conn *net.UDPConn, addr *net.UDPAddr, data []byte) error {
 	log.Println("🟢 Reflector lancé...")
-	log.Printf("🟢 Reflector en écoute sur %s", addr.String())
+	log.Printf("🟢 Reflector en écoute sur %s", conn.LocalAddr().String())
 
 	log.Printf("🛠️ handleReflector appelé pour %s (taille: %d)", addr.String(), len(data))
 
@@ -400,11 +379,12 @@ func handleReflector(conn *net.UDPConn, addr *net.UDPAddr, data []byte) error {
 	return nil
 }
 
+func listenAsReflector(ip string, port int) {
+	log.Println("🎧 [Reflector] Initialisation du réflecteur UDP...")
 
-func listenAsReflector() {
 	addr := net.UDPAddr{
-		Port: AppConfig.Reflector.Port,
-		IP:   net.ParseIP(AppConfig.Reflector.IP),
+		Port: port,
+		IP:   net.ParseIP(ip),
 	}
 
 	conn, err := net.ListenUDP("udp", &addr)
@@ -436,11 +416,11 @@ func listenAsReflector() {
 	}
 }
 
+
 type TestStatusMessage struct {
 	Type    string      `json:"type"`
 	Payload TestStatus  `json:"payload"`
 }
-
 
 
 func Start(db *sql.DB) {
@@ -449,26 +429,14 @@ func Start(db *sql.DB) {
 	// Chargement de la configuration
 	LoadConfig("agent/config.yaml")
 
-	// Lancement du serveur local (TWAMP listener)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("🔥 [Agent] Panic dans le serveur : %v", r)
-			}
-		}()
-		Serveur()
-	}()
+	go Serveur()
 	log.Println("📡 [Agent] Serveur TCP lancé.")
-	time.Sleep(1 * time.Second) // Laisser le temps au serveur de démarrer
 
-	// Lancement du Reflector TWAMP EN PREMIER
-	go func() {
-		defer log.Println("❌ [Agent] Reflector a quitté.")
-		log.Println("🔁 [Agent] Lancement du Reflector TWAMP...")
-		listenAsReflector()
-	}()
-	log.Println("✅ [Agent] Reflector TWAMP lancé.")
-	time.Sleep(1 * time.Second) 
+	go listenAsReflector("127.0.0.1", 8080)
+	//go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
+
+
+	//go listenAsReflector()
 
 	// ✅ Lancement du WebSocket Agent (avant testWorker)
 	wsConn, err := StartWebSocketAgent()
@@ -478,10 +446,10 @@ func Start(db *sql.DB) {
 	defer wsConn.Close()
 	log.Println("🔌 [Agent] Connexion WebSocket établie.")
 
-
-	// **ICI : démarrer le worker qui consomme la file de tests**
+	// ✅ Démarrage du testWorker (tests TWAMP)
 	ctx := context.Background()
-	go testWorker(ctx) 
+	brokers := []string{"localhost:9092"}
+	go testWorker(ctx, brokers)
 
 	// Lancement du listener Kafka
 	go func() {
@@ -490,17 +458,13 @@ func Start(db *sql.DB) {
 	}()
 	log.Println("📨 [Agent] Écoute Kafka lancée.")
 
-
-	// 🟢 Démarrage du serveur gRPC Agent
+	// 🛰️ Démarrage du serveur gRPC Agent
 	go func() {
 		defer log.Println("❌ [Agent] Serveur gRPC arrêté.")
 		startAgentServer()
 	}()
 	log.Println("🛰️ [Agent] Serveur gRPC lancé.")
 
-	
+	// Bloquer pour maintenir l’agent actif
 	select {}
 }
-
-
-

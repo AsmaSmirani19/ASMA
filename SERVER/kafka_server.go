@@ -27,37 +27,54 @@ func SendMessageToKafka(brokers []string, topic, key, value string) error {
 }
 
 func TriggerTestToKafka(db *sql.DB, testID int) error {
-    // Charger la configuration complète du test depuis la BDD
-    config, err := LoadFullTestConfiguration(db, testID)
-    if err != nil {
-        return fmt.Errorf("❌ Erreur chargement config test : %v", err)
-    }
-    log.Printf("🔍 DEBUG Config chargée depuis BDD : %+v", config)
+	// Charger la configuration complète du test depuis la BDD
+	config, err := LoadFullTestConfiguration(db, testID)
+	if err != nil {
+		return fmt.Errorf("❌ Erreur chargement config test : %v", err)
+	}
+	log.Printf("🔍 DEBUG Config chargée depuis BDD : %+v", config)
 
+	if config.Profile == nil {
+		return fmt.Errorf("❌ Erreur : config.Profile est nil pour test %d", testID)
+	}
 
-    // Vérifier que le profil est bien chargé
-    if config.Profile == nil {
-        return fmt.Errorf("❌ Erreur : config.Profile est nil pour test %d", testID)
-    }
+	// Vérifie que TargetAgents contient des données
+	if len(config.TargetAgents) == 0 {
+		return fmt.Errorf("❌ Erreur : Aucun agent cible dans config.TargetAgents")
+	}
 
-    // Encoder la configuration en JSON
-    data, err := json.Marshal(config)
-    if err != nil {
-        return fmt.Errorf("❌ Erreur JSON config : %v", err)
-    }
+	// Créer la liste des reflectors (IP:port)
+	var reflectors []string
+	for _, agent := range config.TargetAgents {
+		reflectors = append(reflectors, fmt.Sprintf("%s:%d", agent.IP, agent.Port))
+	}
 
-    // Créer une clé pour Kafka
-    key := fmt.Sprintf("test-%d", testID)
+	// Construire le message à envoyer
+	msg := TestKafkaMessage{
+		TestID:     config.TestID,
+		TestType:   config.TestType,
+		Sender:     fmt.Sprintf("%s:%d", config.SourceIP, config.SourcePort),
+		Reflectors: reflectors,
+		Profile:    config.Profile,
+	}
 
-    // Envoyer le message à Kafka
-    err = SendMessageToKafka([]string{"localhost:9092"}, "test-requests", key, string(data))
-    if err != nil {
-        return fmt.Errorf("❌ Erreur envoi Kafka : %v", err)
-    }
+	// Encoder le message
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("❌ Erreur JSON config : %v", err)
+	}
 
-    log.Printf("✅ Test %d envoyé à Kafka avec succès", testID)
-    return nil
+	key := fmt.Sprintf("test-%d", testID)
+
+	err = SendMessageToKafka([]string{"localhost:9092"}, "test-requests", key, string(data))
+	if err != nil {
+		return fmt.Errorf("❌ Erreur envoi Kafka : %v", err)
+	}
+
+	log.Printf("✅ Test %d envoyé à Kafka avec succès", testID)
+	return nil
 }
+
 
 
 type TestResult1 struct {

@@ -60,7 +60,7 @@ func convertToProtoConfig(cfg *FullTestConfiguration) *testpb.TestConfig {
         TestId:         int32(cfg.TestID),
         Name:           cfg.Name,
         Duration:       duration,
-        NumberOfAgents: int32(cfg.NumberOfAgents),
+
         SourceId:       int32(cfg.SourceID),
         SourceIp:       cfg.SourceIP,
         SourcePort:     int32(cfg.SourcePort),
@@ -88,9 +88,15 @@ func sendTestConfigToAgent(agentAddress string, config *testpb.TestConfig, testI
 
     client := testpb.NewTestServiceClient(conn)
 
-    ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+    ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
     defer cancel()
 
+    stream, err := client.PerformQuickTest(ctx)
+    if err != nil {
+        return err
+    }
+
+    // Envoi de la config
     req := &testpb.QuickTestMessage{
         Message: &testpb.QuickTestMessage_Request{
             Request: &testpb.QuickTestRequest{
@@ -100,26 +106,32 @@ func sendTestConfigToAgent(agentAddress string, config *testpb.TestConfig, testI
         },
     }
 
-    stream, err := client.PerformQuickTest(ctx)
-    if err != nil {
-        return err
-    }
-
     log.Printf("🚀 [SERVER] Envoi d'une requête vers %s : %+v", agentAddress, req)
     if err := stream.Send(req); err != nil {
         return err
     }
 
-    // Important : attendre une réponse de l'agent
-    resp, err := stream.Recv()
-    if err != nil {
-        log.Printf("❌ Erreur lors de la lecture de la réponse : %v", err)
+    // Signal qu'on a fini d'envoyer
+    if err := stream.CloseSend(); err != nil {
         return err
     }
-    log.Printf("✅ Réponse reçue de l'agent : %+v", resp)
 
-    // Ferme proprement l'envoi après avoir reçu une réponse
-    return stream.CloseSend()
+    // Lecture en boucle des réponses envoyées par l'agent
+    for {
+        resp, err := stream.Recv()
+        if err != nil {
+            if err.Error() == "EOF" || err.Error() == context.Canceled.Error() {
+                log.Println("✅ [SERVER] Fin normale du stream (EOF)")
+                break
+            }
+            log.Printf("❌ Erreur de réception du stream : %v", err)
+            return err
+        }
+
+        log.Printf("📨 [SERVER] Réponse reçue : %+v", resp)
+    }
+
+    return nil
 }
 
 

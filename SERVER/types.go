@@ -1,91 +1,9 @@
 package server
 
 import (
-	"time"
-	"github.com/lib/pq"
-	
+	"time"	
 )
-/////////////////////
-type TestKafkaMessage struct {
-	TestID     int           `json:"test_id"`
-	TestType   string        `json:"test_type"`    
-	Sender     string        `json:"sender"`      
-	Reflectors []string      `json:"reflectors"`  
-	Profile    *testProfile  `json:"profile"`     
-}
-////////////////////////////
 
-
-
-type Agent struct {
-	ID           int                 `json:"id"          db:"id"`
-	Port         int  
-	Name         string              `json:"name"        db:"Name"`
-	Address      string              `json:"address"     db:"Address"`
-	TestHealth   bool                `json:"testhealth"  db:"Test_health"`
-}
-
-type agentGroup struct {
-	ID             int               `json:"id"`
-	GroupName     string             `json:"group_name"`
-	NumberOfAgents  int             `json:"number_of_agents"`
-	CreationDate   time.Time         `json:"creation_date"` 
-	AgentIDs       pq.Int64Array     `json:"agent_ids"`
-}
-
-type AgentHealthCheck struct {
-    ID        int       `db:"id"`         
-    AgentID   int       `db:"agent_id"`
-    Timestamp time.Time `db:"timestamp"`
-    Status    string    `db:"status"`
-}
-
-type testProfile struct {
-    ID                  int       `json:"id"`
-    ProfileName         string    `json:"profile_name"`
-    CreationDate        time.Time `json:"creation_date"`
-    PacketSize          int       `json:"packet_size"`
-    TimeBetweenAttempts int       `json:"time_between_attempts"`
-}
-
-type Threshold struct {
-	ID                uint     `json:"id"`
-	Name              string   `json:"name"`
-	CreationDate      string   `json:"creation_date"`
-	Avg               float64  `json:"avg"`
-	Min               float64  `json:"min"`
-	Max               float64  `json:"max"`
-	AvgStatus         bool     `json:"avg_status"`
-	MinStatus         bool     `json:"min_status"`
-	MaxStatus         bool     `json:"max_status"`
-	AvgOpr            string   `json:"avg_opr"`
-	MinOpr            string   `json:"min_opr"`
-	MaxOpr            string   `json:"max_opr"`
-	SelectedMetric     string   `json:"selected_metric"`
-	
-	ActiveThresholds  []string `json:"active_thresholds"`
-	DisabledThresholds []string `json:"disabled_thresholds"`
-}
-
-type PlannedTest struct {
-	ID             int       `json:"id"`
-	TestName       string    `json:"test_name"`
-	TestDuration   string    `json:"test_duration"`   
-	NumberOfAgents int       `json:"number_of_agents"`
-	CreationDate   time.Time `json:"creation_date"`  
-
-	TestType     string       `json:"test_type"`          
-	SourceID     int          `json:"source_id"`      
-	TargetID     int          `json:"target_id"`      
-	ProfileID    int          `json:"profile_id"`     
-	ThresholdID  int          `json:"threshold_id"`   
-	InProgress  bool         `json:"waiting"`        
-	Failed       bool         `json:"failed"`         
-	Completed    bool          `json:"completed"`	
-	Error        bool            `json:"Error"`
-	TargetAgentIDs []int `json:"target_ids,omitempty"`
-
-}
 
 type TestStatus struct {
 	TestID int    `json:"test_id"`
@@ -115,13 +33,8 @@ type DisplayedTest struct {
 	TestDuration  string    `json:"test_duration"`
 	SourceAgent   string    `json:"source_agent"`
 	TargetAgent   string    `json:"target_agent"`
-	 
-	//Min           float64   `json:"min"`
-	//Max           float64   `json:"max"`
-	//Avg           float64   `json:"avg"`
 	ThresholdName string    `json:"threshold_name"`
 	ThresholdValue float64  `json:"threshold_value"`
-
 	Status        string    `json:"status"`
 	InProgress    bool      `json:"in_progress"`
 	Completed     bool      `json:"completed"`
@@ -142,64 +55,51 @@ type TestDetails struct {
 }
 
 
-///*********************
-
+/////////////////////
+type TestKafkaMessage struct {
+	TestID     int           `json:"test_id"`
+	TestType   string        `json:"test_type"`    
+	Sender     string        `json:"sender"`      
+	Reflectors []string      `json:"reflectors"`  
+	Profile    *Profile      `json:"profile"`     
+}
+////////////////////////////
 
 
 type Profile struct {
-	ID              int
-	SendingInterval time.Duration
-	PacketSize      int
-	PacketRate      int
+	ID              int           `json:"id"`
+	SendingInterval time.Duration `json:"sending_interval"`
+	PacketSize      int           `json:"packet_size"`
+	PacketRate      int           `json:"packet_rate"`
 }
 
 type FullTestConfiguration struct {
-    TestID          int           `json:"test_id"`
-    Name            string        `json:"name"`
-    TestType        string        `json:"test_type"`
-    RawDuration     string        `json:"raw_duration"`
-    NumberOfAgents  int           `json:"number_of_agents"`
-    SourceID        int           `json:"source_id"`
-    SourceIP        string        `json:"source_ip"`
-    SourcePort      int           `json:"source_port"`
-    TargetID        int           `json:"target_id"`
-    TargetIP        string        `json:"target_ip"`
-    TargetPort      int           `json:"target_port"`
-    ProfileID       int           `json:"profile_id"`
-    Duration        time.Duration `json:"duration"`
-    Profile         *Profile      `json:"profile"`
-  
-    TargetAgentIDs  []int         `json:"target_ids,omitempty"`
-    //Agents          []AgentRole   `json:"agents,omitempty"`
-    //Role            string        `json:"role"`
+	TestID          int           `json:"test_id"`
+	Name            string        `json:"name"`
+	TestType        string        `json:"test_type"` // "quick", "planned", etc.
+	RawDuration     string        `json:"raw_duration"`
+	Duration        time.Duration `json:"duration"`
+	NumberOfAgents  int           `json:"number_of_agents"`
+	ProfileID       int           `json:"profile_id"`
+	Profile         *Profile      `json:"profile"`
+	TargetAgentIDs  []int         `json:"target_ids,omitempty"`
+	SourceID        int           `json:"source_id"`
+	SourceIP        string        `json:"source_ip"`
+	SourcePort      int           `json:"source_port"`
+	TargetID        int           `json:"target_id"`
+	TargetIP        string        `json:"target_ip"`
+	TargetPort      int           `json:"target_port"`
+	TargetAgents    []AgentInfo
 }
 
-
-type MinimalTestConfiguration struct {
-    TestID          int           `json:"test_id"`
-    Duration        time.Duration `json:"duration"`
-    SourceIP        string        `json:"source_ip"`
-    SourcePort      int           `json:"source_port"`
-    TargetIP        string        `json:"target_ip"`
-    TargetPort      int           `json:"target_port"`
-    PacketSize      int           `json:"packet_size"`
-    SendingInterval time.Duration `json:"sending_interval"`
+type Target struct {
+    IP   string `json:"ip"`
+    Port int    `json:"port"`
 }
 
-func NewMinimalConfig(full *FullTestConfiguration) *MinimalTestConfiguration {
-    return &MinimalTestConfiguration{
-        TestID:          full.TestID,
-        Duration:        full.Duration,
-        SourceIP:        full.SourceIP,
-        SourcePort:      full.SourcePort,
-        TargetIP:        full.TargetIP,
-        TargetPort:      full.TargetPort,
-        PacketSize:      full.Profile.PacketSize,
-        SendingInterval: full.Profile.SendingInterval,
-    }
+type AgentInfo struct {
+    ID   int
+    IP   string
+    Port int
 }
-
-
-
-
 
