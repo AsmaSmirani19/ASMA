@@ -53,10 +53,11 @@ func ConvertProtoProfileToGo(protoProfile *testpb.Profile) *Profile {
 	}
 	return &Profile{
 		ID:              int(protoProfile.Id),
-		SendingInterval: int64(protoProfile.SendingInterval),// nanosecondes
+		SendingInterval: int64(protoProfile.SendingInterval), // ici : en millisecondes, PAS de * time.Millisecond
 		PacketSize:      int(protoProfile.PacketSize),
 	}
 }
+
 
 // ConvertProtoConfigToGo convertit la config protobuf en struct Go native
 func ConvertProtoConfigToGo(protoConfig *testpb.TestConfig) TestConfig {
@@ -77,8 +78,6 @@ func ConvertProtoConfigToGo(protoConfig *testpb.TestConfig) TestConfig {
 		Profile:        profile,
 	}
 }
-
-
 
 func (a *twampAgent) PerformQuickTest(stream testpb.TestService_PerformQuickTestServer) error {
 	log.Println("🟢 Agent : connexion de test rapide reçue")

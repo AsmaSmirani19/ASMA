@@ -103,7 +103,7 @@ func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics
 	}
 
 	// Étape 5 : Boucle d'envoi
-	intervalDuration := time.Duration(config.Profile.SendingInterval) * time.Millisecond
+	intervalDuration := time.Duration(config.Profile.SendingInterval)
 	log.Printf("Intervalle entre paquets : %v", intervalDuration)
 
 	log.Println("🚀 Début de la boucle d'envoi...")
@@ -179,7 +179,6 @@ finDuTest:
 	log.Println("✅ Test terminé avec succès.")
 	return stats, qos, nil
 }
-
 
 
 // Fonction utilitaire abs pour int64

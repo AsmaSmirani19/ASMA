@@ -11,6 +11,7 @@ import(
 	//"github.com/gorilla/websocket"
 
 )
+
 func Client(config TestConfig) error {
 	log.Println("🔵 [Client] Début d'exécution du client...")
 	
@@ -130,7 +131,9 @@ func Client(config TestConfig) error {
 		log.Printf("✅ [Client] Test terminé. Stats : %+v | QoS : %+v", stats, qos)
 	}
 
-
+	log.Println("⏳ [Client] Fin du test, préparation de l'envoi du Stop-Session...")
+	time.Sleep(2 * time.Second)
+	
 	// 6. Envoi Stop-Session
 	log.Println("📤 [Client] Envoi Stop-Session...")
 	stopSessionPacket := StopSessionPacket{
