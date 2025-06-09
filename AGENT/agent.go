@@ -45,14 +45,22 @@ func receivePacket(conn *net.UDPConn) ([]byte, error) {
 func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
     log.Printf("🚀 [Client] Lancement du test ID %d...", config.TestID)
 
-    // Étape 0 : Vérification des paramètres de configuration
-    if config.TargetIP == "" || config.TargetPort == 0 {
-        log.Println("❌ ERREUR CRITIQUE : IP ou Port cible manquant dans la configuration.")
-        if ws != nil {
-            _ = sendTestStatus(ws, config.TestID, "failed")
-        }
-        return nil, nil, fmt.Errorf("IP ou Port cible manquant : IP=%q, Port=%d", config.TargetIP, config.TargetPort)
-    }
+	// Étape 0 bis : Vérification des paramètres de durée et d'intervalle
+	if config.Duration <= 0 {
+		log.Println("❌ ERREUR : Durée de test invalide ou manquante.")
+		if ws != nil {
+			_ = sendTestStatus(ws, config.TestID, "failed")
+		}
+		return nil, nil, fmt.Errorf("Durée de test invalide : %d ms", config.Duration)
+	}
+
+	if config.Profile == nil || config.Profile.SendingInterval <= 0 {
+		log.Println("❌ ERREUR : Intervalle d'envoi invalide ou config.Profile manquant.")
+		if ws != nil {
+			_ = sendTestStatus(ws, config.TestID, "failed")
+		}
+		return nil, nil, fmt.Errorf("Intervalle d'envoi invalide : %d ms", config.Profile.SendingInterval)
+	}
 
     // Étape 1 : Parse de la durée (en supposant que config.Duration est en millisecondes)
     log.Printf("Durée brute (millisecondes) : %d", config.Duration)
@@ -434,8 +442,9 @@ func Start(db *sql.DB) {
 	go Serveur()
 	log.Println("📡 [Agent] Serveur TCP lancé.")
 
-	//go listenAsReflector("127.0.0.1", 8080)
-	go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
+	go listenAsReflector("127.0.0.1", 8081)
+	//go listenAsReflector("127.0.0.1", 8082)
+	//go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
 
 
 	//go listenAsReflector()

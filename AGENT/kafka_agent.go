@@ -156,11 +156,9 @@ log.Printf("🎯 Test %d ➜ envoi vers IP=%s, Port=%d", config.TestID, config.T
 
 }
 
-
-
 func RunAgentToGroupTest(test TestConfig, brokers []string) {
 	log.Printf("▶️ Début test agent-to-group ID=%d", test.TestID)
-
+	
 	if len(test.Targets) == 0 {
 		log.Printf("❌ Erreur : aucune cible fournie pour le test %d", test.TestID)
 		return
@@ -170,23 +168,36 @@ func RunAgentToGroupTest(test TestConfig, brokers []string) {
 	var wg sync.WaitGroup
 
 	for _, target := range test.Targets {
-		wg.Add(1) // pour chaque goroutine
-		 go func(target Target) {
-			defer wg.Done()
+	wg.Add(1)
+	go func(target Target) {
+		defer wg.Done()
 
-			log.Printf("🚀 Lancement test vers %s:%d ...", target.IP, target.Port)
+		// Copie sécurisée du test
+		targetConfig := test
 
-			targetConfig := test // copie la config globale
-			targetConfig.TargetIP = target.IP
-			targetConfig.TargetPort = target.Port
-			targetConfig.SourceIP = AppConfig.Sender.IP
+		// ✅ Copie profonde du pointeur Profile (très important)
+		if test.Profile != nil {
+			profileCopy := *test.Profile               // copie la valeur pointée
+			targetConfig.Profile = &profileCopy        // nouvelle adresse
+		}
 
-			err := Client(targetConfig)
-			if err != nil {
-				log.Printf("❌ Erreur TWAMP (UDP) avec %s:%d : %v", target.IP, target.Port, err)
-			}
-		}(target)
-	}
+		// Mise à jour spécifique à la cible
+		targetConfig.TargetIP = target.IP
+		targetConfig.TargetPort = target.Port
+		targetConfig.SourceIP = AppConfig.Sender.IP
+		log.Printf("🚀 Lancement client pour cible %s:%d avec config:", target.IP, target.Port)
+		log.Printf("     ➤ IntervalMs: %d", targetConfig.IntervalMs)
+		log.Printf("     ➤ PacketSize: %d", targetConfig.PacketSize)
+		log.Printf("     ➤ Profil: %+v", targetConfig.Profile)
+
+
+		err := Client(targetConfig)
+		if err != nil {
+			log.Printf("❌ Erreur TWAMP (UDP) avec %s:%d : %v", target.IP, target.Port, err)
+		}
+	}(target)
+}
+
 
 	wg.Wait() // attend la fin de tous les tests
 	log.Printf("🏁 Fin du test agent-to-group ID=%d", test.TestID)

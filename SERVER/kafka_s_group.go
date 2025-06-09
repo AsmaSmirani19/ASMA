@@ -18,14 +18,16 @@ type AgentGroupTest struct {
 	TestOption string   `json:"test_option"`
 }
 
-
 func ConvertToAgentGroupTest(config *FullTestConfiguration, db *sql.DB) (*AgentGroupTest, error) {
 	if config == nil {
 		return nil, fmt.Errorf("la configuration est vide")
 	}
 	if config.Profile == nil {
+		log.Printf("❌ Profil manquant dans FullTestConfiguration pour TestID=%d", config.TestID)
 		return nil, fmt.Errorf("le profil est manquant")
 	}
+
+	log.Printf("🔍 DEBUG Profil brut avant copie pour TestID=%d : %+v", config.TestID, config.Profile)
 
 	var targets []Target
 	for _, id := range config.TargetAgentIDs {
@@ -33,8 +35,10 @@ func ConvertToAgentGroupTest(config *FullTestConfiguration, db *sql.DB) (*AgentG
 		var port int
 		err := db.QueryRow(`SELECT "Address", "Port" FROM "Agent_List" WHERE id = $1`, id).Scan(&ip, &port)
 		if err != nil {
+			log.Printf("❌ Erreur récupération IP/Port agent cible ID=%d : %v", id, err)
 			return nil, fmt.Errorf("erreur récupération IP et port pour agent ID %d : %w", id, err)
 		}
+		log.Printf("📡 Agent cible ID=%d : IP=%s, Port=%d", id, ip, port)
 		targets = append(targets, Target{IP: ip, Port: port})
 	}
 
@@ -44,9 +48,12 @@ func ConvertToAgentGroupTest(config *FullTestConfiguration, db *sql.DB) (*AgentG
 		SenderPort: config.SourcePort,
 		Targets:    targets,
 		Duration:   int(config.Duration.Seconds()), // Duration en dehors de Profile
-		Profile:    *config.Profile,                // Profile complet, sans duration dedans
+		Profile:    *config.Profile,                // ⚠️ Copie par valeur
 		TestOption: "agent-to-group",
 	}
+
+	log.Printf("✅ AgentGroupTest construit : TestID=%d, Targets=%d, Duration=%ds", agt.TestID, len(agt.Targets), agt.Duration)
+	log.Printf("🧪 Profil copié dans AgentGroupTest : %+v", agt.Profile)
 
 	return agt, nil
 }
@@ -63,6 +70,14 @@ func TriggerAgentToGroupTest(db *sql.DB, brokers []string, topic string, testID 
 	testMsg, err := ConvertToAgentGroupTest(config, db)
 	if err != nil {
 		return fmt.Errorf("erreur transformation en AgentGroupTest : %w", err)
+	}
+
+	log.Printf("DEBUG testMsg.Targets = %+v", testMsg.Targets)
+	log.Printf("🔍 DEBUG Profil transmis dans testMsg (TestID=%d) : %+v", testMsg.TestID, testMsg.Profile)
+
+	// (Optionnel) Vérification explicite de champs critiques
+	if testMsg.Profile.SendingInterval == 0 || testMsg.Profile.PacketSize == 0 {
+		log.Printf("⚠️ WARNING: Le profil semble incomplet ou invalide ! %+v", testMsg.Profile)
 	}
 
 	// Encoder en JSON

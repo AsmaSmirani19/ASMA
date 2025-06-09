@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	
-	
+	"strconv"
 	"fmt"
 	"log"
 
@@ -16,35 +16,44 @@ import (
 	"github.com/rs/cors"	
 )
 
-
 func ParsePGInterval(interval string) (time.Duration, error) {
     interval = strings.TrimSpace(interval)
-    dur, err := time.ParseDuration(interval)
-    if err == nil {
+
+    // Essayer format direct ("1s", "2m", etc.)
+    if dur, err := time.ParseDuration(interval); err == nil {
         return dur, nil
     }
 
     parts := strings.Split(interval, ":")
     switch len(parts) {
     case 3:
-        // ex: "HH:MM:SS(.fraction)"
-        h := parts[0]
-        m := parts[1]
-        s := parts[2]
-        return time.ParseDuration(fmt.Sprintf("%sh%sm%ss", h, m, s))
+        h, err1 := strconv.Atoi(parts[0])
+        m, err2 := strconv.Atoi(parts[1])
+        s, err3 := strconv.ParseFloat(parts[2], 64)
+        if err1 != nil || err2 != nil || err3 != nil {
+            return 0, fmt.Errorf("erreur parsing interval '%s': %v, %v, %v", interval, err1, err2, err3)
+        }
+        total := time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s*float64(time.Second))
+        return total, nil
     case 2:
-        // ex: "MM:SS(.fraction)"
-        m := parts[0]
-        s := parts[1]
-        return time.ParseDuration(fmt.Sprintf("%sm%ss", m, s))
+        m, err1 := strconv.Atoi(parts[0])
+        s, err2 := strconv.ParseFloat(parts[1], 64)
+        if err1 != nil || err2 != nil {
+            return 0, fmt.Errorf("erreur parsing interval '%s': %v, %v", interval, err1, err2)
+        }
+        total := time.Duration(m)*time.Minute + time.Duration(s*float64(time.Second))
+        return total, nil
     case 1:
-        // ex: "SS(.fraction)" ou nombre seul en secondes
-        s := parts[0]
-        return time.ParseDuration(s + "s")
+        s, err := strconv.ParseFloat(parts[0], 64)
+        if err != nil {
+            return 0, fmt.Errorf("erreur parsing secondes '%s': %v", interval, err)
+        }
+        return time.Duration(s * float64(time.Second)), nil
     default:
         return 0, fmt.Errorf("format interval invalide: %q", interval)
     }
 }
+
 
 type TestResult struct {
 	AgentID    string

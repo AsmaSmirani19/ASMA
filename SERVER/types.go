@@ -69,7 +69,7 @@ type TestKafkaMessage struct {
 
 type Profile struct {
 	ID              int           `json:"id"`
-	SendingInterval time.Duration `json:"sending_interval"`
+	SendingInterval time.Duration `json:"sending_interval"` 
 	PacketSize      int           `json:"packet_size"`
 	PacketRate      int           `json:"packet_rate"`
 }
