@@ -35,7 +35,7 @@ message Profile {
 message TestConfig {
   int32 test_id = 1;
   string name = 2;
-  int64 duration = 3;
+  int64 duration = 3; // en millisecondes
   int32 number_of_agents = 4;
   int32 source_id = 5;
   string source_ip = 6;

@@ -41,11 +41,10 @@ func receivePacket(conn *net.UDPConn) ([]byte, error) {
     return buffer[:n], nil
 }
 
-
 func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics, error) {
-    log.Printf("🚀 [Client] Lancement du test ID %d...", config.TestID)
+	log.Printf("🚀 [Client] Lancement du test ID %d...", config.TestID)
 
-	// Étape 0 bis : Vérification des paramètres de durée et d'intervalle
+	// Étape 0 bis : Vérification des paramètres
 	if config.Duration <= 0 {
 		log.Println("❌ ERREUR : Durée de test invalide ou manquante.")
 		if ws != nil {
@@ -62,134 +61,126 @@ func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics
 		return nil, nil, fmt.Errorf("Intervalle d'envoi invalide : %d ms", config.Profile.SendingInterval)
 	}
 
-    // Étape 1 : Parse de la durée (en supposant que config.Duration est en millisecondes)
-    log.Printf("Durée brute (millisecondes) : %d", config.Duration)
-    duration := time.Duration(config.Duration) * time.Millisecond
-    log.Printf("Durée convertie en time.Duration : %v", duration)
+	// Étape 1 : Parsing durée
+	log.Printf("Durée brute (ms) : %d", config.Duration)
+	duration := time.Duration(config.Duration) * time.Millisecond
+	log.Printf("Durée convertie : %v", duration)
 
-    // Étape 2 : Initialisation des structures
-    log.Println("⚙️ Étape 2 : Initialisation des structures de métriques...")
-    stats := &PacketStats{
-        StartTime:      time.Now(),
-        TargetAddress:  config.TargetIP,
-        TargetPort:     config.TargetPort,
-        LatencySamples: make([]int64, 0),
-        TestID:         config.TestID,
-    }
-    qos := &QoSMetrics{}
+	// Initialisation du contexte avec timeout
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	defer cancel()
 
-    // Étape 3 : Création du socket UDP
-    log.Println("🔌 Étape 3 : Création du socket UDP...")
-    localAddr := &net.UDPAddr{
-        IP:   net.ParseIP(config.SourceIP),
-        Port: config.SourcePort,
-    }
-    conn, err := net.ListenUDP("udp", localAddr)
-    if err != nil {
-        return nil, nil, fmt.Errorf("❌ Échec de l'ouverture du socket UDP (%s:%d) : %v",
-            config.SourceIP, config.SourcePort, err)
-    }
-    defer conn.Close()
-    log.Printf("✅ Socket bindé sur %s:%d", config.SourceIP, config.SourcePort)
+	// Étape 2 : Initialisation
+	stats := &PacketStats{
+		StartTime:      time.Now(),
+		TargetAddress:  config.TargetIP,
+		TargetPort:     config.TargetPort,
+		LatencySamples: make([]int64, 0),
+		TestID:         config.TestID,
+	}
+	qos := &QoSMetrics{}
 
-    // Étape 4 : Notification WebSocket de début de test
-    if ws != nil {
-        log.Println("📤 Envoi du statut 'running' via WebSocket...")
-        if err := sendTestStatus(ws, config.TestID, "In progress"); err != nil {
-            log.Printf("❌ Erreur envoi statut running: %v", err)
-        }
-        if err := ws.WriteMessage(websocket.TextMessage, []byte("🟢 WS Test commencé")); err != nil {
-            log.Printf("❌ Impossible d'écrire sur WebSocket: %v", err)
-        } else {
-            log.Println("✅ Test de WebSocket : message envoyé")
-        }
-    }
+	// Étape 3 : Socket UDP
+	localAddr := &net.UDPAddr{
+		IP:   net.ParseIP(config.SourceIP),
+		Port: config.SourcePort,
+	}
+	conn, err := net.ListenUDP("udp", localAddr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("❌ Socket UDP erreur (%s:%d) : %v",
+			config.SourceIP, config.SourcePort, err)
+	}
+	defer conn.Close()
 
-    // Étape 5 : Boucle d'envoi des paquets
-    if config.Profile == nil {
-        log.Println("❌ Erreur : config.Profile est nil")
-        return nil, nil, fmt.Errorf("config.Profile est nil")
-    }
+	log.Printf("✅ Socket bindé sur %s:%d", config.SourceIP, config.SourcePort)
 
-    log.Printf("Valeur brute SendingInterval (ms) : %d", config.Profile.SendingInterval)
+	// Étape 4 : WebSocket statut "In progress"
+	if ws != nil {
+		if err := sendTestStatus(ws, config.TestID, "In progress"); err != nil {
+			log.Printf("❌ Erreur statut WebSocket : %v", err)
+		}
+		_ = ws.WriteMessage(websocket.TextMessage, []byte("🟢 WS Test commencé"))
+	}
 
-    intervalDuration := time.Duration(config.Profile.SendingInterval)
+	// Étape 5 : Boucle d'envoi
+	intervalDuration := time.Duration(config.Profile.SendingInterval) * time.Millisecond
+	log.Printf("Intervalle entre paquets : %v", intervalDuration)
 
-    log.Printf("⏳ Intervalle entre paquets converti : %v", intervalDuration)
+	log.Println("🚀 Début de la boucle d'envoi...")
 
-    testEnd := stats.StartTime.Add(duration)
-    log.Println("🚀 Étape 5 : Lancement de la boucle d'envoi des paquets...")
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("⏱️ Durée du test atteinte.")
+			goto finDuTest
+		default:
+			log.Println("🔄 Envoi paquet UDP...")
+			if err := handleSender(stats, qos, conn, ws); err != nil {
+				log.Printf("❌ Erreur handleSender : %v", err)
+				if ws != nil {
+					_ = sendTestStatus(ws, config.TestID, "failed")
+				}
+				return nil, nil, err
+			}
+			time.Sleep(intervalDuration)
+		}
+	}
 
-    for time.Now().Before(testEnd) {
-        log.Println("🔄 Envoi paquet UDP...")
-        if err := handleSender(stats, qos, conn, ws); err != nil {
-            log.Printf("❌ Erreur dans handleSender : %v", err)
-            if ws != nil {
-                _ = sendTestStatus(ws, config.TestID, "failed")
-            }
-            return nil, nil, err
-        }
-        time.Sleep(intervalDuration)
-    }
+finDuTest:
+	// Étape 6 : Calcul métriques
+	log.Println("📊 Calcul des métriques QoS...")
 
-    // Étape 6 : Calcul des métriques QoS
-    log.Println("📊 Étape 6 : Calcul des métriques QoS...")
-    if stats.SentPackets > 0 {
-        qos.PacketLossPercent = float64(stats.SentPackets-stats.ReceivedPackets) / float64(stats.SentPackets) * 100
-    }
+	if stats.SentPackets > 0 {
+		qos.PacketLossPercent = float64(stats.SentPackets-stats.ReceivedPackets) / float64(stats.SentPackets) * 100
+	}
+	if len(stats.LatencySamples) > 0 {
+		var totalLatency int64
+		for _, lat := range stats.LatencySamples {
+			totalLatency += lat
+		}
+		qos.AvgLatencyMs = float64(totalLatency) / float64(len(stats.LatencySamples)) / 1e6
+	}
+	if len(stats.LatencySamples) > 1 {
+		var totalJitter int64
+		for i := 1; i < len(stats.LatencySamples); i++ {
+			totalJitter += abs(stats.LatencySamples[i] - stats.LatencySamples[i-1])
+		}
+		qos.TotalJitter = totalJitter
+		qos.AvgJitterMs = float64(totalJitter) / float64(len(stats.LatencySamples)-1) / 1e6
+	}
+	if duration.Seconds() >= 1.0 && stats.TotalBytesReceived > 0 {
+		qos.AvgThroughputKbps = float64(stats.TotalBytesReceived*8) / duration.Seconds() / 1000
+	}
 
-    if len(stats.LatencySamples) > 0 {
-        var totalLatency int64
-        for _, lat := range stats.LatencySamples {
-            totalLatency += lat
-        }
-        // latences stockées en nanosecondes, conversion en ms
-        qos.AvgLatencyMs = float64(totalLatency) / float64(len(stats.LatencySamples)) / 1e6
-    }
+	SetLatestMetrics(qos)
+	log.Printf("✅ Métriques calculées : %+v", qos)
 
-    if len(stats.LatencySamples) > 1 {
-        var totalJitter int64
-        for i := 1; i < len(stats.LatencySamples); i++ {
-            totalJitter += abs(stats.LatencySamples[i] - stats.LatencySamples[i-1])
-        }
-        qos.TotalJitter = totalJitter
-        qos.AvgJitterMs = float64(totalJitter) / float64(len(stats.LatencySamples)-1) / 1e6
-    }
+	// Étape 7 : Envoi Kafka
+	kafkaBrokers := []string{"localhost:9092"}
+	kafkaTopic := "test-results"
+	result := TestResult1{
+		TestID:         config.TestID,
+		LatencyMs:      qos.AvgLatencyMs,
+		JitterMs:       qos.AvgJitterMs,
+		ThroughputKbps: qos.AvgThroughputKbps,
+	}
+	if err := sendTestResultKafka(kafkaBrokers, kafkaTopic, result); err != nil {
+		log.Printf("❌ Erreur Kafka : %v", err)
+	} else {
+		log.Printf("✅ Résultat Kafka envoyé (TestID %d)", config.TestID)
+	}
 
-    if duration.Seconds() >= 1.0 && stats.TotalBytesReceived > 0 {
-        qos.AvgThroughputKbps = float64(stats.TotalBytesReceived*8) / duration.Seconds() / 1000
-    }
-
-    SetLatestMetrics(qos)
-    log.Printf("✅ Métriques calculées : %+v", qos)
-
-    // Étape 7 : Envoi Kafka
-    kafkaBrokers := []string{"localhost:9092"}
-    kafkaTopic := "test-results"
-    result := TestResult1{
-        TestID:         config.TestID,
-        LatencyMs:      qos.AvgLatencyMs,
-        JitterMs:       qos.AvgJitterMs,
-        ThroughputKbps: qos.AvgThroughputKbps,
-    }
-
-    if err := sendTestResultKafka(kafkaBrokers, kafkaTopic, result); err != nil {
-        log.Printf("❌ Erreur lors de l'envoi Kafka du résultat : %v", err)
-    } else {
-        log.Printf("✅ Résultat Kafka envoyé pour TestID %d", config.TestID)
-    }
-
-    // Étape 8 : Fin du test
-    if ws != nil {
-        log.Println("📤 Envoi du statut 'finished' via WebSocket...")
-        if err := sendTestStatus(ws, config.TestID, "completed"); err != nil {
-            log.Printf("❌ Erreur envoi statut finished: %v", err)
-        }
-    }
-
-    log.Println("✅ Test terminé avec succès.")
-    return stats, qos, nil
+	// Étape 8 : WebSocket "completed"
+	if ws != nil {
+		if err := sendTestStatus(ws, config.TestID, "completed"); err != nil {
+			log.Printf("❌ Erreur WebSocket fin: %v", err)
+		}
+	}
+	log.Println("✅ Test terminé avec succès.")
+	return stats, qos, nil
 }
+
+
 
 // Fonction utilitaire abs pour int64
 func abs(x int64) int64 {
@@ -442,9 +433,9 @@ func Start(db *sql.DB) {
 	go Serveur()
 	log.Println("📡 [Agent] Serveur TCP lancé.")
 
-	go listenAsReflector("127.0.0.1", 8081)
+	//go listenAsReflector("127.0.0.1", 8081)
 	//go listenAsReflector("127.0.0.1", 8082)
-	//go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
+	go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
 
 
 	//go listenAsReflector()

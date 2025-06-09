@@ -65,7 +65,7 @@ func ConvertProtoConfigToGo(protoConfig *testpb.TestConfig) TestConfig {
 	return TestConfig{
 		TestID:         int(protoConfig.TestId),
 		Name:           protoConfig.Name,
-		Duration:       protoConfig.Duration,
+		Duration:       int64(protoConfig.Duration / 1e6),
 		NumberOfAgents: int(protoConfig.NumberOfAgents),
 		SourceID:       int(protoConfig.SourceId),
 		SourceIP:       protoConfig.SourceIp,
