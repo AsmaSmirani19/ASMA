@@ -44,6 +44,33 @@ func SaveAttemptResult(db *sql.DB, testID int64, latency, jitter, throughput flo
 	return err
 }
 
+
+func GetAttemptResultsByTestID(db *sql.DB, testID int64) ([]AttemptResult, error) {
+	query := `
+        SELECT latency_ms, jitter_ms, throughput_kbps
+        FROM attempt_results
+        WHERE test_id = $1
+        ORDER BY id ASC  -- Optionnel, pour garder l'ordre chronologique
+    `
+	rows, err := db.Query(query, testID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []AttemptResult
+	for rows.Next() {
+		var r AttemptResult
+		if err := rows.Scan(&r.LatencyMs, &r.JitterMs, &r.ThroughputKbps); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+
+	return results, nil
+}
+
+
 // Agent_List
 func saveAgentToDB(db *sql.DB, agent *Agent) error {
 	err := db.QueryRow(`
@@ -793,8 +820,8 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 			t."failed",
 			t."Error"
 		FROM test t
-		JOIN "Agent_List" sa ON t.source_id = sa."Id"
-		JOIN "Agent_List" ta ON t.target_id = ta."Id"
+		JOIN "Agent_List" sa ON t.source_id = sa."id"
+		JOIN "Agent_List" ta ON t.target_id = ta."id"
 		LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
 
 `

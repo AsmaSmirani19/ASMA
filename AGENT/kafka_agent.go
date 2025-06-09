@@ -8,6 +8,8 @@ import (
 	"log"
 	"time"
 	"sync"
+	"strings"
+	"strconv"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -80,60 +82,78 @@ func ListenToTestRequestsFromKafka(db *sql.DB) {
 	go testWorker(ctx, kafkaConfig.Brokers)
 
 	for {
-		msg, err := reader.ReadMessage(ctx)
-		if err != nil {
-			log.Printf("❌ Erreur lecture Kafka: %v", err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		// 1) Essayer de décoder en AgentGroupTest (agent-to-group)
-		var agt AgentGroupTest
-		if err := json.Unmarshal(msg.Value, &agt); err == nil && agt.TestOption == "agent-to-group" {
-			log.Printf("✅ AgentGroupTest reçu via Kafka: %+v", agt)
-
-			config := agentGroupTestToTestConfig(agt)
-
-			err = LaunchTest(config)
-			if err != nil {
-				log.Printf("⚠️ Erreur ajout file test %d : %v", config.TestID, err)
-			}
-			continue
-		}
-
-		// 2) Essayer de décoder en TestKafkaMessage (agent-to-agent / planned_test)
-		var simpleMsg TestKafkaMessage
-		if err := json.Unmarshal(msg.Value, &simpleMsg); err == nil && 
-			(simpleMsg.TestType == "agent-to-agent" || simpleMsg.TestType == "agent-to-group") {
-
-			log.Printf("✅ TestKafkaMessage simple reçu: %+v", simpleMsg)
-
-			if len(simpleMsg.Reflectors) == 0 {
-				log.Printf("❌ Aucune IP cible dans le message Kafka")
-				continue
-			}
-
-			// Ici tu peux adapter selon le type de test
-			config := TestConfig{
-				TestID:     simpleMsg.TestID,
-				TestOption: simpleMsg.TestType, // "agent-to-agent" ou "planned_test"
-				SourceIP:   simpleMsg.Sender,
-				TargetIP:   simpleMsg.Reflectors[0],
-				TargetPort: 20000, // ou autre port selon ton besoin
-				Duration:   int64((10 * time.Second) / time.Millisecond), // adapter si nécessaire
-				IntervalMs: int(simpleMsg.Profile.SendingInterval / int64(time.Millisecond)),
-				PacketSize: simpleMsg.Profile.PacketSize,
-			}
-
-			err = LaunchTest(config)
-			if err != nil {
-				log.Printf("⚠️ Erreur ajout file test %d : %v", config.TestID, err)
-			}
-			continue
-		}
-
-		log.Printf("⚠️ Message Kafka non reconnu ou invalide: %s", string(msg.Value))
+	msg, err := reader.ReadMessage(ctx)
+	if err != nil {
+		log.Printf("❌ Erreur lecture Kafka: %v", err)
+		time.Sleep(2 * time.Second)
+		continue
 	}
+
+	// 1) Essayer de décoder en AgentGroupTest
+	var agt AgentGroupTest
+	if err := json.Unmarshal(msg.Value, &agt); err == nil && agt.TestOption == "agent-to-group" {
+		log.Printf("✅ AgentGroupTest reçu via Kafka: %+v", agt)
+
+		config := agentGroupTestToTestConfig(agt)
+
+		err = LaunchTest(config)
+		if err != nil {
+			log.Printf("⚠️ Erreur ajout file test %d : %v", config.TestID, err)
+		}
+		continue
+	}
+
+	// 2) Sinon, tenter en TestKafkaMessage (pour agent-to-agent)
+	var simpleMsg TestKafkaMessage
+	if err := json.Unmarshal(msg.Value, &simpleMsg); err == nil {
+		log.Printf("✅ TestKafkaMessage reçu: %+v", simpleMsg)
+
+		if len(simpleMsg.Reflectors) == 0 {
+			log.Printf("❌ Aucune IP cible dans le message Kafka")
+			continue
+		}
+
+			// Séparer IP et port de Reflector[0]
+		ipPort := strings.Split(simpleMsg.Reflectors[0], ":")
+		if len(ipPort) != 2 {
+			log.Printf("❌ IP Reflector mal formée : %s", simpleMsg.Reflectors[0])
+			continue
+		}
+		ip := ipPort[0]
+		port, err := strconv.Atoi(ipPort[1])
+		if err != nil {
+			log.Printf("❌ Port Reflector invalide : %s", ipPort[1])
+			continue
+		}
+
+		config := TestConfig{
+			TestID:     simpleMsg.TestID,
+			TestOption: "agent-to-agent",
+			SourceIP:   simpleMsg.Sender,
+			TargetIP:   ip,
+			TargetPort: port,
+			Duration:   int64((10 * time.Second) / time.Millisecond),
+			IntervalMs: int(simpleMsg.Profile.SendingInterval / int64(time.Millisecond)),
+			PacketSize: simpleMsg.Profile.PacketSize,
+			Profile: &Profile{
+				SendingInterval: simpleMsg.Profile.SendingInterval, // ne pas multiplier
+				PacketSize:      simpleMsg.Profile.PacketSize,
+			},
+
+		}
+
+log.Printf("🎯 Test %d ➜ envoi vers IP=%s, Port=%d", config.TestID, config.TargetIP, config.TargetPort)
+
+		err = LaunchTest(config)
+		if err != nil {
+			log.Printf("⚠️ Erreur ajout file test %d : %v", config.TestID, err)
+		}
+		continue
+	}
+
+	log.Printf("⚠️ Message Kafka non reconnu ou invalide: %s", string(msg.Value))
+	}
+
 }
 
 

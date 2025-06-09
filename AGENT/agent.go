@@ -54,13 +54,10 @@ func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics
         return nil, nil, fmt.Errorf("IP ou Port cible manquant : IP=%q, Port=%d", config.TargetIP, config.TargetPort)
     }
 
-    // Étape 1 : Parse de la durée
-    log.Printf("Durée brute (secondes) : %d", config.Duration)
-	
-	duration := time.Duration(config.Duration) // déjà en ns
-
-	log.Printf("Durée convertie : %v", duration)
-
+    // Étape 1 : Parse de la durée (en supposant que config.Duration est en millisecondes)
+    log.Printf("Durée brute (millisecondes) : %d", config.Duration)
+    duration := time.Duration(config.Duration) * time.Millisecond
+    log.Printf("Durée convertie en time.Duration : %v", duration)
 
     // Étape 2 : Initialisation des structures
     log.Println("⚙️ Étape 2 : Initialisation des structures de métriques...")
@@ -105,11 +102,16 @@ func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics
         log.Println("❌ Erreur : config.Profile est nil")
         return nil, nil, fmt.Errorf("config.Profile est nil")
     }
+
+    log.Printf("Valeur brute SendingInterval (ms) : %d", config.Profile.SendingInterval)
+
     intervalDuration := time.Duration(config.Profile.SendingInterval)
-    log.Printf("⏳ Intervalle entre paquets : %v", intervalDuration)
+
+    log.Printf("⏳ Intervalle entre paquets converti : %v", intervalDuration)
 
     testEnd := stats.StartTime.Add(duration)
     log.Println("🚀 Étape 5 : Lancement de la boucle d'envoi des paquets...")
+
     for time.Now().Before(testEnd) {
         log.Println("🔄 Envoi paquet UDP...")
         if err := handleSender(stats, qos, conn, ws); err != nil {
@@ -133,6 +135,7 @@ func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics
         for _, lat := range stats.LatencySamples {
             totalLatency += lat
         }
+        // latences stockées en nanosecondes, conversion en ms
         qos.AvgLatencyMs = float64(totalLatency) / float64(len(stats.LatencySamples)) / 1e6
     }
 
@@ -180,13 +183,12 @@ func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics
     return stats, qos, nil
 }
 
-
-// Fonction utilitaire pour calculer la valeur absolue
+// Fonction utilitaire abs pour int64
 func abs(x int64) int64 {
-	if x < 0 {
-		return -x
-	}
-	return x
+    if x < 0 {
+        return -x
+    }
+    return x
 }
 
 // Déclaration d'une variable globale pour stocker les métriques
@@ -432,8 +434,8 @@ func Start(db *sql.DB) {
 	go Serveur()
 	log.Println("📡 [Agent] Serveur TCP lancé.")
 
-	go listenAsReflector("127.0.0.1", 8080)
-	//go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
+	//go listenAsReflector("127.0.0.1", 8080)
+	go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
 
 
 	//go listenAsReflector()

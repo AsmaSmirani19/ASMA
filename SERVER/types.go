@@ -20,10 +20,11 @@ type QoSMetrics struct {
 
 type AttemptResult struct {
     TestID         int64   `json:"test_id"`
-    LatencyMs      float64 `json:"latency_ms"`
-    JitterMs       float64 `json:"jitter_ms"`
-    ThroughputKbps float64 `json:"throughput_kbps"`
+    LatencyMs      float64 `json:"latency"`
+    JitterMs       float64 `json:"jitter"`
+    ThroughputKbps float64 `json:"throughput"`
 }
+
 
 type DisplayedTest struct {
 	TestID         int       `json:"test_id"`
@@ -50,8 +51,8 @@ type TestDetails struct {
     TestDuration   string  `json:"testDuration"`
     SourceAgent    string  `json:"sourceAgent"`
     TargetAgent    string  `json:"targetAgent"`
-    ThresholdName  string  `json:"thresholdName"`
-    ThresholdValue float64 `json:"thresholdValue"`
+    ThresholdName  string  `json:"thresholdName "`   
+    ThresholdValue float64 `json:"thresholdValue "` 
 }
 
 

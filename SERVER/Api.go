@@ -898,3 +898,32 @@ func handlePlannedTest(db *sql.DB) http.HandlerFunc {
 
 
 
+
+
+func getTestResultsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		enableCORS(w, r)
+
+		// Récupérer le paramètre "id" dans l'URL (ex: /api/tests?id=112)
+		testIDStr := r.URL.Query().Get("id")
+		if testIDStr == "" {
+			http.Error(w, "Missing 'id' query parameter", http.StatusBadRequest)
+			return
+		}
+
+		testID, err := strconv.ParseInt(testIDStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid 'id' query parameter", http.StatusBadRequest)
+			return
+		}
+
+		results, err := GetAttemptResultsByTestID(db, testID)
+		if err != nil {
+			http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+	}
+}
