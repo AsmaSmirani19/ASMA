@@ -40,7 +40,7 @@ func agentGroupTestToTestConfig(agt AgentGroupTest) TestConfig {
 
         targetIPs = append(targetIPs, cleanIP)
         cleanTargets = append(cleanTargets, Target{
-            ID:   t.ID,       // ✅ ID bien assigné ici
+            ID:   t.ID,
             IP:   cleanIP,
             Port: cleanPort,
         })
@@ -61,23 +61,32 @@ func agentGroupTestToTestConfig(agt AgentGroupTest) TestConfig {
         PacketRate:      agt.Profile.PacketRate,
     }
 
-    intervalMs := int(profile.SendingInterval)
+    intervalMs := int(profile.SendingInterval * 1000) // si en secondes
+
     if intervalMs <= 0 || profile.PacketSize <= 0 {
         log.Fatalf("❌ ERREUR: Intervalle d'envoi (%d ms) ou PacketSize (%d) invalide pour le test ID=%d", intervalMs, profile.PacketSize, agt.TestID)
     }
 
-    durationMs := int64(agt.Duration)
+    durationMs := int64(agt.Duration * 1000) // convertit secondes → millisecondes
+
+
+    // <<--- MODIFICATION ICI
+    sourcePort := agt.SenderPort
+    if len(agt.Targets) > 1 {
+        log.Printf("ℹ️ Plusieurs cibles détectées, port source mis à 0 pour éviter conflit de port")
+        sourcePort = 0
+    }
 
     return TestConfig{
         TestID:     agt.TestID,
         SourceIP:   agt.SenderIP,
-        SourcePort: agt.SenderPort,
+        SourcePort: sourcePort,
 
         TargetIPs:  targetIPs,
         Targets:    cleanTargets,
         TargetIP:   firstTarget.IP,
         TargetPort: firstTarget.Port,
-        TargetID:   firstTarget.ID,    // ✅ TargetID assigné ici
+        TargetID:   firstTarget.ID,
 
         TestOption: agt.TestOption,
 
@@ -88,7 +97,6 @@ func agentGroupTestToTestConfig(agt AgentGroupTest) TestConfig {
         Profile:    &profile,
     }
 }
-
 
 
 

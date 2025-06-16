@@ -67,6 +67,7 @@ func TriggerTestToKafka(db *sql.DB, testID int) error {
 		Reflectors: reflectors,
 		Targets:  targets,
 		Profile:    config.Profile,
+		Duration:   config.Duration, 
 	}
 
 	// Encoder le message

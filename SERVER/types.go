@@ -71,7 +71,8 @@ type TestKafkaMessage struct {
 	Sender     string        `json:"sender"`      
 	Reflectors []string      `json:"reflectors"`
 	Targets    []Target `json:"targets"`   
-	Profile    *Profile      `json:"profile"`     
+	Profile    *Profile      `json:"profile"`  
+	Duration   time.Duration `json:"duration"`   
 }
 ////////////////////////////
 

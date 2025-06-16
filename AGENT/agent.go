@@ -86,6 +86,7 @@ func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics
 		IP:   net.ParseIP(config.SourceIP),
 		Port: config.SourcePort,
 	}
+	
 	conn, err := net.ListenUDP("udp", localAddr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("❌ Socket UDP erreur (%s:%d) : %v",
@@ -465,10 +466,10 @@ func Start(db *sql.DB) {
 	go Serveur()
 	log.Println("📡 [Agent] Serveur TCP lancé.")
 
-	//go listenAsReflector("127.0.0.1", 8081)//7
-	go listenAsReflector("127.0.0.1", 8080)//8
-	//go listenAsReflector("127.0.0.1", 50051)//10
-	//go listenAsReflector("127.0.0.1", 8082)//11
+	go listenAsReflector("127.0.0.1", 8081)//7
+	//go listenAsReflector("127.0.0.1", 8080)//8
+	    //go listenAsReflector("127.0.0.1", 50051)//10
+	go listenAsReflector("127.0.0.1", 8082)//11
 	//go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
 
 

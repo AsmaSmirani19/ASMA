@@ -23,6 +23,7 @@ type TestKafkaMessage struct {
 		SendingInterval int64 `json:"sending_interval"`
 		PacketSize      int   `json:"packet_size"`
 	} `json:"profile"`
+	Duration time.Duration `json:"duration"` 
 }
 
 // File d'attente pour les tests
@@ -142,7 +143,7 @@ func ListenToTestRequestsFromKafka(db *sql.DB) {
 				TargetIP:   ip,
 				TargetPort: port,
 				TargetID:   targetID, // ← ajout du TargetID ici
-				Duration:   int64((10 * time.Second) / time.Millisecond),
+				Duration: int64(simpleMsg.Duration / time.Millisecond),
 				IntervalMs: int(simpleMsg.Profile.SendingInterval / int64(time.Millisecond)),
 				PacketSize: simpleMsg.Profile.PacketSize,
 				Profile: &Profile{
