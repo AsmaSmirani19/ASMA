@@ -77,6 +77,7 @@ func StartTest(config TestConfig, ws *websocket.Conn) (*PacketStats, *QoSMetrics
 		TargetPort:     config.TargetPort,
 		LatencySamples: make([]int64, 0),
 		TestID:         config.TestID,
+		TargetID:       config.TargetID, 
 	}
 	qos := &QoSMetrics{}
 
@@ -155,11 +156,36 @@ finDuTest:
 	SetLatestMetrics(qos)
 	log.Printf("✅ Métriques calculées : %+v", qos)
 
-	// Étape 7 : Envoi Kafka
+		if ws != nil {
+		qosMsg := WsQoSMetrics{
+			Type:              "qos_metrics",
+			TestID:            config.TestID,
+			TargetID:          config.TargetID,
+			AvgLatencyMs:      qos.AvgLatencyMs,
+			AvgJitterMs:       qos.AvgJitterMs,
+			AvgThroughputKbps: qos.AvgThroughputKbps,
+			PacketLossPercent: qos.PacketLossPercent,
+		}
+
+		data, err := json.Marshal(qosMsg)
+		if err != nil {
+			log.Printf("❌ Erreur JSON WebSocket QoS : %v", err)
+		} else if err := ws.WriteMessage(websocket.TextMessage, data); err != nil {
+			log.Printf("❌ Erreur envoi QoS WebSocket : %v", err)
+		} else {
+			log.Println("📤 Métriques QoS envoyées via WebSocket.")
+		}
+	}
+
+
+	// Étape 7 : Envoi Kafka  
+	log.Printf("📤 Envoi Kafka : agent_id(TargetID) = %d", config.TargetID)
+
 	kafkaBrokers := []string{"localhost:9092"}
 	kafkaTopic := "test-results"
 	result := TestResult1{
 		TestID:         config.TestID,
+		TargetID:       config.TargetID,
 		LatencyMs:      qos.AvgLatencyMs,
 		JitterMs:       qos.AvgJitterMs,
 		ThroughputKbps: qos.AvgThroughputKbps,
@@ -211,15 +237,18 @@ func GetLatestMetrics() *QoSMetrics {
 
 // Structure à envoyer via WebSocket
 type WsTestResult struct {
-	TestID          int     `json:"test_id"` 
-	LatencyMs       float64 `json:"latency_ms"`
-	JitterMs        float64 `json:"jitter_ms"`
-	ThroughputKbps  float64 `json:"throughput_kbps"`
+    TestID         int     `json:"test_id"` 
+    TargetID       int64   `json:"target_id"`
+    ReflectorID    int     `json:"reflector_id"`
+    LatencyMs      float64 `json:"latency_ms"`
+    JitterMs       float64 `json:"jitter_ms"`
+    ThroughputKbps float64 `json:"throughput_kbps"`
 }
+
 
 func handleSender(stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, wsConn *websocket.Conn) error {
 	log.Println("🚀 handleSender : début")
-
+	
 	// ✅ Vérification que l'adresse cible est bien définie
 	if stats.TargetAddress == "" || net.ParseIP(stats.TargetAddress) == nil || stats.TargetPort == 0 {
 		log.Printf("❌ destination UDP invalide : IP=%q, Port=%d", stats.TargetAddress, stats.TargetPort)
@@ -304,14 +333,18 @@ func handleSender(stats *PacketStats, qos *QoSMetrics, conn *net.UDPConn, wsConn
 	}
 
 	latencyMs := float64(latency) / 1e6
+	log.Printf("🧪 DEBUG TargetID stats: %d", stats.TargetID)
 
 	// Construction du message WebSocket
-	wsResult := WsTestResult{
-		TestID:         stats.TestID,
-		LatencyMs:      latencyMs,
-		JitterMs:       jitterMs,
+		wsResult := WsTestResult{
+		TestID:    stats.TestID,
+		TargetID: int64(stats.TargetID),
+		LatencyMs: latencyMs,
+		JitterMs:  jitterMs,
 		ThroughputKbps: throughputKbps,
 	}
+
+	log.Printf("📊 Résultat WebSocket à envoyer: %+v", wsResult)
 
 	// Envoi WebSocket
 	if wsConn != nil {
@@ -432,9 +465,11 @@ func Start(db *sql.DB) {
 	go Serveur()
 	log.Println("📡 [Agent] Serveur TCP lancé.")
 
-	//go listenAsReflector("127.0.0.1", 8081)
-	//go listenAsReflector("127.0.0.1", 8082)
-	go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
+	//go listenAsReflector("127.0.0.1", 8081)//7
+	go listenAsReflector("127.0.0.1", 8080)//8
+	//go listenAsReflector("127.0.0.1", 50051)//10
+	//go listenAsReflector("127.0.0.1", 8082)//11
+	//go listenAsReflector(AppConfig.Reflector.IP, AppConfig.Reflector.Port)
 
 
 	//go listenAsReflector()

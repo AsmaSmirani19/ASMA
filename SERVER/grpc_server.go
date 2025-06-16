@@ -8,9 +8,34 @@ import (
     "google.golang.org/grpc/credentials/insecure"
 	"strings"
 	"strconv"
+    "fmt"
     "mon-projet-go/testpb"
 )
 
+func LaunchQuickTest(cfg *FullTestConfiguration) (bool, error) {
+	senderAddr := fmt.Sprintf("%s:%d", cfg.SourceIP, cfg.SourcePort)
+
+	// ✅ Vérification de la santé du sender via gRPC
+	healthySender, msg := CheckAgentHealthGRPC(senderAddr)
+	if !healthySender {
+		log.Printf("❌ Agent sender (%s) indisponible : %s", senderAddr, msg)
+		return false, fmt.Errorf("sender indisponible : %s", msg)
+	}
+
+	log.Printf("✅ Agent sender (%s) est disponible — lancement du test", senderAddr)
+	log.Println("ℹ️ Aucun HealthCheck effectué sur le reflector (UDP only)")
+
+	// 🔧 Conversion de la configuration vers le format protobuf
+	protoConfig := convertToProtoConfig(cfg)
+
+	// 📤 Envoi de la configuration au sender
+	if err := sendTestConfigToAgent(senderAddr, protoConfig, strconv.Itoa(cfg.TestID)); err != nil {
+		return false, fmt.Errorf("échec envoi config au sender : %w", err)
+	}
+
+	log.Println("🚀 Test lancé avec succès")
+	return true, nil
+}
 
 func convertToProtoProfile(p *Profile) *testpb.Profile {
     if p == nil {

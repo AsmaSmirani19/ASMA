@@ -45,46 +45,7 @@ func enableCORS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 }
 
-type AgentService struct {
-	db *sql.DB
-}
 
-func (s *AgentService) CheckAllAgents() {
-	// 1. Récupérer tous les agents
-	rows, err := s.db.Query(`SELECT id, "Name", "Address" FROM "Agent_List"`)
-	if err != nil {
-		log.Fatalf("Erreur récupération agents: %v", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var agent Agent // ← utiliser ta struct complète
-
-		// 2. Récupération des données
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Address); err != nil {
-			log.Printf("Erreur scan agent: %v", err)
-			continue
-		}
-
-		// 3. Vérification santé via gRPC
-		healthy, msg := CheckAgentHealthGRPC(agent.Address)
-		agent.TestHealth = healthy
-
-		// 4. Mise à jour en base
-		_, err := s.db.Exec(`UPDATE "Agent_List" SET "Test_health" = $1 WHERE "id" = $2`, agent.TestHealth, agent.ID)
-		if err != nil {
-			log.Printf("Erreur mise à jour test_health pour l'agent %d: %v", agent.ID, err)
-		}
-
-		// 5. Affichage console
-		status := "❌"
-		if healthy {
-			status = "✅"
-		}
-		fmt.Printf("%s Agent %d (%s @ %s): %s\n",
-			status, agent.ID, agent.Name, agent.Address, msg)
-	}
-}
 
 var tests = []Test{}
 var mu sync.Mutex
@@ -157,23 +118,30 @@ func triggerTestHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		case "quick_test":
-			log.Println("⚡ Démarrage du Quick Test via gRPC Client...")
-			address := fmt.Sprintf("%s:%d", testConfig.SourceIP, testConfig.SourcePort)
-			testIDStr := strconv.Itoa(testConfig.TestID)
-			protoConfig := convertToProtoConfig(testConfig)
+	case "quick_test":
+			log.Println("⚡ Démarrage du Quick Test via LaunchQuickTest...")
 
-			if err := sendTestConfigToAgent(address, protoConfig, testIDStr); err != nil {
-				log.Printf("❌ Erreur envoi config à l'agent %s : %v", address, err)
-				http.Error(w, "Erreur d’envoi du test quick", http.StatusInternalServerError)
+			ok, err := LaunchQuickTest(testConfig)
+			if err != nil || !ok {
+				log.Printf("❌ Erreur lors du lancement du test rapide : %v", err)
+				http.Error(w, "Erreur lors du lancement du test rapide", http.StatusInternalServerError)
 				return
 			}
 
-		default:
-			log.Printf("❌ Type de test inconnu : %s", testConfig.TestType)
-			http.Error(w, "Type de test inconnu", http.StatusBadRequest)
-			return
-		}
+			// ✅ Réponse de succès
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "success",
+				"message": "Test déclenché avec succès",
+				"test_id": testConfig.TestID,
+				"type":    testConfig.TestType,
+			})
+
+	default:
+		log.Printf("❌ Type de test inconnu : %s", testConfig.TestType)
+		http.Error(w, "Type de test inconnu", http.StatusBadRequest)
+		return
+	}
 
 		// ✅ Réponse HTTP finale
 		w.Header().Set("Content-Type", "application/json")
@@ -812,6 +780,8 @@ func handleGetAllTests(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Envoi au client de %d tests", len(tests))
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(tests); err != nil {
 		log.Printf("Erreur JSON encode : %v", err)
@@ -896,28 +866,33 @@ func handlePlannedTest(db *sql.DB) http.HandlerFunc {
     }
 }
 
-
-
-
-
 func getTestResultsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		enableCORS(w, r)
 
-		// Récupérer le paramètre "id" dans l'URL (ex: /api/tests?id=112)
 		testIDStr := r.URL.Query().Get("id")
 		if testIDStr == "" {
 			http.Error(w, "Missing 'id' query parameter", http.StatusBadRequest)
 			return
 		}
-
 		testID, err := strconv.ParseInt(testIDStr, 10, 64)
-		if err != nil {
+		if err != nil || testID <= 0 {
 			http.Error(w, "Invalid 'id' query parameter", http.StatusBadRequest)
 			return
 		}
 
-		results, err := GetAttemptResultsByTestID(db, testID)
+		targetIDStr := r.URL.Query().Get("target_id")
+		if targetIDStr == "" {
+			http.Error(w, "Missing 'target_id' query parameter", http.StatusBadRequest)
+			return
+		}
+		targetID, err := strconv.ParseInt(targetIDStr, 10, 64)
+		if err != nil || targetID <= 0 {
+			http.Error(w, "Invalid 'target_id' query parameter", http.StatusBadRequest)
+			return
+		}
+
+		results, err := GetAttemptResultsByTestAndTargetID(db, testID, targetID)
 		if err != nil {
 			http.Error(w, "Failed to fetch results", http.StatusInternalServerError)
 			return
@@ -926,4 +901,63 @@ func getTestResultsHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(results)
 	}
+}
+
+func handleGetTargetIdsByTestID(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		testIDStr := strings.TrimPrefix(r.URL.Path, "/api/test-results/targets/")
+		testID, err := strconv.ParseInt(testIDStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid test ID", http.StatusBadRequest)
+			return
+		}
+
+		targetIds, err := GetAllTargetIdsFromAttemptResults(db, testID)
+		if err != nil {
+			http.Error(w, "Failed to get target IDs", http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(targetIds)
+	}
+}
+
+
+
+
+func handleGetQoSResultsByTestID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Exemple : /api/qos-results/12
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/qos-results/")
+	log.Printf("➡️ Requête QoS pour le test ID : %s", idStr)
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil || id <= 0 {
+		log.Printf("❌ ID invalide ou nul : '%s' (%d)", idStr, id)
+		http.Error(w, fmt.Sprintf("ID de test invalide : %d", id), http.StatusBadRequest)
+		return
+	}
+
+	db, err := InitDB()
+	if err != nil {
+		log.Println("❌ Connexion DB échouée")
+		http.Error(w, "Erreur de connexion à la base de données", http.StatusInternalServerError)
+		return
+	}
+	defer db.Close()
+
+	results, err := getResultsFromDB(db, id)
+	if err != nil {
+		log.Printf("❌ Erreur récupération résultats QoS : %v", err)
+		http.Error(w, "Résultats QoS non trouvés", http.StatusNotFound)
+		return
+	}
+
+	log.Printf("✅ %d résultats QoS trouvés pour test ID %d", len(results), id)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
 }

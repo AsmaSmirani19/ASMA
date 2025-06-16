@@ -87,6 +87,11 @@ func Start(db *sql.DB) {
 	http.HandleFunc("/api/test-results/", handleGetTestByID)
 	http.HandleFunc("/api/planned-test", handlePlannedTest(db))
 	http.HandleFunc("/api/test-results_id", getTestResultsHandler(db))
+	http.HandleFunc("/api/qos-results/", handleGetQoSResultsByTestID)
+	http.HandleFunc("/api/test-results/targets/", handleGetTargetIdsByTestID(db))
+
+
+
 
 
 	//http.HandleFunc("/api/test-results", handleTestResults(db))
@@ -124,8 +129,8 @@ func Start(db *sql.DB) {
 
 
 	// 🔁 7. Vérification des agents
-	agentService := &AgentService{db: db}
-	agentService.CheckAllAgents()
+	//agentService := &AgentService{db: db}
+	//agentService.CheckAllAgents()
 
 	// 🎧 8. Écoute active des résultats TWAMP
 

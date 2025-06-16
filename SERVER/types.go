@@ -11,18 +11,22 @@ type TestStatus struct {
 }
 
 type QoSMetrics struct {
-	PacketLossPercent float64 `json:"packet_loss_percent"`
-	AvgLatencyMs      int64   `json:"avg_latency_ms"`
-	AvgJitterMs       int64   `json:"avg_jitter_ms"`
+	TestID            int     `json:"test_id"`
+	TargetID          int     `json:"target_id"`
+	AvgLatencyMs      float64 `json:"avg_latency_ms"`
+	AvgJitterMs       float64 `json:"avg_jitter_ms"`
 	AvgThroughputKbps float64 `json:"avg_throughput_kbps"`
-	TotalJitter       int64   `json:"total_jitter"`
+	PacketLossPercent float64 `json:"packet_loss_percent"`
 }
 
+
+
 type AttemptResult struct {
-    TestID         int64   `json:"test_id"`
-    LatencyMs      float64 `json:"latency"`
-    JitterMs       float64 `json:"jitter"`
-    ThroughputKbps float64 `json:"throughput"`
+	TestID         int64   `json:"test_id"`
+	TargetID       int64   `json:"target_id"`
+	LatencyMs      float64 `json:"latency_ms"`
+	JitterMs       float64 `json:"jitter_ms"`
+	ThroughputKbps float64 `json:"throughput_kbps"`
 }
 
 
@@ -34,8 +38,9 @@ type DisplayedTest struct {
 	TestDuration  string    `json:"test_duration"`
 	SourceAgent   string    `json:"source_agent"`
 	TargetAgent   string    `json:"target_agent"`
+	TargetIDs      []int
 	ThresholdName string    `json:"threshold_name"`
-	ThresholdValue float64  `json:"threshold_value"`
+	ThresholdValue float64  `json:"threshold_value"` 
 	Status        string    `json:"status"`
 	InProgress    bool      `json:"in_progress"`
 	Completed     bool      `json:"completed"`
@@ -51,8 +56,11 @@ type TestDetails struct {
     TestDuration   string  `json:"testDuration"`
     SourceAgent    string  `json:"sourceAgent"`
     TargetAgent    string  `json:"targetAgent"`
-    ThresholdName  string  `json:"thresholdName "`   
-    ThresholdValue float64 `json:"thresholdValue "` 
+    ThresholdName  string  `json:"thresholdName"`   
+    ThresholdValue float64 `json:"thresholdValue"` 
+	SelectedMetric string  `json:"selectedMetric"` 
+	ThresholdType    string  `json:"thresholdType"`
+    ThresholdOperator string `json:"thresholdOperator"`
 }
 
 
@@ -61,7 +69,8 @@ type TestKafkaMessage struct {
 	TestID     int           `json:"test_id"`
 	TestType   string        `json:"test_type"`    
 	Sender     string        `json:"sender"`      
-	Reflectors []string      `json:"reflectors"`  
+	Reflectors []string      `json:"reflectors"`
+	Targets    []Target `json:"targets"`   
 	Profile    *Profile      `json:"profile"`     
 }
 ////////////////////////////
@@ -94,6 +103,7 @@ type FullTestConfiguration struct {
 }
 
 type Target struct {
+	ID   int    `json:"id"` 
     IP   string `json:"ip"`
     Port int    `json:"port"`
 }

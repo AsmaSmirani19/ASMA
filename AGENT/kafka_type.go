@@ -21,7 +21,7 @@ func agentGroupTestToTestConfig(agt AgentGroupTest) TestConfig {
 
     for _, t := range agt.Targets {
         originalIP := t.IP
-        log.Printf("🎯 Target brut: IP=%s, Port=%d", originalIP, t.Port)
+        log.Printf("🎯 Target brut: IP=%s, Port=%d, ID=%d", originalIP, t.Port, t.ID)
 
         cleanIP := originalIP
         cleanPort := t.Port
@@ -40,24 +40,25 @@ func agentGroupTestToTestConfig(agt AgentGroupTest) TestConfig {
 
         targetIPs = append(targetIPs, cleanIP)
         cleanTargets = append(cleanTargets, Target{
+            ID:   t.ID,       // ✅ ID bien assigné ici
             IP:   cleanIP,
             Port: cleanPort,
         })
     }
 
-    // Sécurité : éviter un panic si cleanTargets est vide par précaution
     if len(cleanTargets) == 0 {
         log.Fatalf("❌ ERREUR: Aucun agent cible valide après nettoyage.")
     }
 
     firstTarget := cleanTargets[0]
-    log.Printf("✅ Nettoyé: cleanTargets[0].IP = '%s', Port = %d", firstTarget.IP, firstTarget.Port)
+    log.Printf("✅ Nettoyé: cleanTargets[0].IP = '%s', Port = %d, ID=%d", firstTarget.IP, firstTarget.Port, firstTarget.ID)
+    log.Printf("🕵️ Vérification finale - TargetID utilisé pour config : %d", firstTarget.ID)
 
     profile := Profile{
-    ID:              agt.Profile.ID,
-    SendingInterval: agt.Profile.SendingInterval,
-    PacketSize:      agt.Profile.PacketSize,
-    PacketRate:      agt.Profile.PacketRate,
+        ID:              agt.Profile.ID,
+        SendingInterval: agt.Profile.SendingInterval,
+        PacketSize:      agt.Profile.PacketSize,
+        PacketRate:      agt.Profile.PacketRate,
     }
 
     intervalMs := int(profile.SendingInterval)
@@ -65,12 +66,7 @@ func agentGroupTestToTestConfig(agt AgentGroupTest) TestConfig {
         log.Fatalf("❌ ERREUR: Intervalle d'envoi (%d ms) ou PacketSize (%d) invalide pour le test ID=%d", intervalMs, profile.PacketSize, agt.TestID)
     }
 
-    log.Printf("🧪 DEBUG Profil: %+v", profile)
-    log.Printf("🧪 DEBUG IntervalMs = %d", intervalMs)
-
-
     durationMs := int64(agt.Duration)
-    log.Printf("🧪 DEBUG Duration = %dms", durationMs)
 
     return TestConfig{
         TestID:     agt.TestID,
@@ -81,6 +77,7 @@ func agentGroupTestToTestConfig(agt AgentGroupTest) TestConfig {
         Targets:    cleanTargets,
         TargetIP:   firstTarget.IP,
         TargetPort: firstTarget.Port,
+        TargetID:   firstTarget.ID,    // ✅ TargetID assigné ici
 
         TestOption: agt.TestOption,
 
@@ -91,6 +88,8 @@ func agentGroupTestToTestConfig(agt AgentGroupTest) TestConfig {
         Profile:    &profile,
     }
 }
+
+
 
 
 // Profile contient la configuration du profil d'envoi de paquets.
@@ -114,6 +113,7 @@ type AgentGroupTest struct {
 
 // Target représente une cible d'agent avec IP et port.
 type Target struct {
+      ID   int
     IP   string `json:"ip"`
     Port int    `json:"port"`
 }

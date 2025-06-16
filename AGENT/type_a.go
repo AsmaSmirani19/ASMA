@@ -5,13 +5,24 @@ import (
 	"time"	
 )
 
+type WsQoSMetrics struct { 
+	Type              string  `json:"type"` // "qos_metrics"
+	TestID            int     `json:"test_id"`
+	TargetID          int     `json:"target_id"`
+	AvgLatencyMs      float64 `json:"avg_latency_ms"`
+	AvgJitterMs       float64 `json:"avg_jitter_ms"`
+	AvgThroughputKbps float64 `json:"avg_throughput_kbps"`
+	PacketLossPercent float64 `json:"packet_loss_percent"`
+}
+
+
 type WebSocketMessage struct {
     Type    string      `json:"type"`
     Payload interface{} `json:"payload"`
 }
 
 type PacketStats struct {
-
+	TargetID        int
 	TestID             int 
 	SentPackets        int
 	ReceivedPackets    int

@@ -39,7 +39,13 @@ func ConvertToAgentGroupTest(config *FullTestConfiguration, db *sql.DB) (*AgentG
 			return nil, fmt.Errorf("erreur récupération IP et port pour agent ID %d : %w", id, err)
 		}
 		log.Printf("📡 Agent cible ID=%d : IP=%s, Port=%d", id, ip, port)
-		targets = append(targets, Target{IP: ip, Port: port})
+
+		target := Target{
+			ID:   id,   // ✅ Ajout de l’ID ici
+			IP:   ip,
+			Port: port,
+		}
+		targets = append(targets, target)
 	}
 
 	agt := &AgentGroupTest{
@@ -57,6 +63,7 @@ func ConvertToAgentGroupTest(config *FullTestConfiguration, db *sql.DB) (*AgentG
 
 	return agt, nil
 }
+
 
 // TriggerAgentToGroupTest charge la config, transforme, encode et envoie sur Kafka
 func TriggerAgentToGroupTest(db *sql.DB, brokers []string, topic string, testID int) error {

@@ -9,9 +9,10 @@ import (
 	"net"
 	"strings"
 	"time"
-
+	"strconv"
 	"github.com/lib/pq"
 )
+
 // / update etat **********
 func UpdateTestStatus(db *sql.DB, testID int, inProgress, failed, completed, errorFlag bool) error {
 	result, err := db.Exec(`
@@ -35,40 +36,157 @@ func UpdateTestStatus(db *sql.DB, testID int, inProgress, failed, completed, err
 	return nil
 }
 
-func SaveAttemptResult(db *sql.DB, testID int64, latency, jitter, throughput float64) error {
+func SaveAttemptResult(db *sql.DB, testID int64, targetID int64, latency, jitter, throughput float64) error {
 	query := `
-        INSERT INTO attempt_results (test_id, latency_ms, jitter_ms, throughput_kbps)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO attempt_results (test_id, target_id, latency_ms, jitter_ms, throughput_kbps)
+        VALUES ($1, $2, $3, $4, $5)
     `
-	_, err := db.Exec(query, testID, latency, jitter, throughput)
+	_, err := db.Exec(query, testID, targetID, latency, jitter, throughput)
 	return err
 }
 
-
-func GetAttemptResultsByTestID(db *sql.DB, testID int64) ([]AttemptResult, error) {
-	query := `
-        SELECT latency_ms, jitter_ms, throughput_kbps
-        FROM attempt_results
-        WHERE test_id = $1
-        ORDER BY id ASC  -- Optionnel, pour garder l'ordre chronologique
-    `
-	rows, err := db.Query(query, testID)
+func saveResultsToDB(db *sql.DB, qos QoSMetrics) error {
+	_, err := db.Exec(`
+		INSERT INTO "Test_Results" (
+			test_id,
+			target_id,
+			"PacketLossPercent",
+			"AvgLatencyMs",
+			"AvgJitterMs",
+			"AvgThroughputKbps"
+		) VALUES ($1, $2, $3, $4, $5, $6)`,
+		qos.TestID,
+		qos.TargetID,
+		qos.PacketLossPercent,
+		qos.AvgLatencyMs,
+		qos.AvgJitterMs,
+		qos.AvgThroughputKbps,
+	)
 	if err != nil {
+		log.Println("❌ Erreur insertion dans DB :", err)
+	} else {
+		log.Println("✅ Résultat inséré avec succès !")
+	}
+	return err
+}
+
+func nullToZero(n sql.NullFloat64) float64 {
+	if n.Valid {
+		return n.Float64
+	}
+	return 0.0
+}
+
+func getResultsFromDB(db *sql.DB, testID int) ([]QoSMetrics, error) {
+	rows, err := db.Query(`
+		SELECT 
+			test_id,
+			target_id,
+			"PacketLossPercent",
+			"AvgLatencyMs",
+			"AvgJitterMs",
+			"AvgThroughputKbps"
+		FROM "Test_Results"
+		WHERE test_id = $1
+	`, testID)
+
+	if err != nil {
+		log.Println("❌ Erreur lors de la lecture des résultats depuis la DB :", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []QoSMetrics
+
+	for rows.Next() {
+		var qos QoSMetrics
+		err := rows.Scan(
+			&qos.TestID,
+			&qos.TargetID,
+			&qos.PacketLossPercent,
+			&qos.AvgLatencyMs,
+			&qos.AvgJitterMs,
+			&qos.AvgThroughputKbps,
+		)
+		if err != nil {
+			log.Println("❌ Erreur pendant le scan des résultats :", err)
+			return nil, err
+		}
+		results = append(results, qos)
+	}
+
+	if err = rows.Err(); err != nil {
+		log.Println("❌ Erreur de lecture finale :", err)
+		return nil, err
+	}
+
+	log.Printf("✅ %d résultats QoS récupérés avec succès pour test_id = %d", len(results), testID)
+	return results, nil
+}
+
+
+func GetAttemptResultsByTestAndTargetID(db *sql.DB, testID int64, targetID int64) ([]AttemptResult, error) {
+	query := `
+		SELECT target_id, latency_ms, jitter_ms, throughput_kbps
+		FROM attempt_results
+		WHERE test_id = $1 AND target_id = $2
+		ORDER BY id ASC
+	`
+	rows, err := db.Query(query, testID, targetID)
+	if err != nil {
+		log.Println("[DB QUERY ERROR]", err)
 		return nil, err
 	}
 	defer rows.Close()
 
 	var results []AttemptResult
 	for rows.Next() {
-		var r AttemptResult
-		if err := rows.Scan(&r.LatencyMs, &r.JitterMs, &r.ThroughputKbps); err != nil {
+		var targetIDFromDB sql.NullInt64
+		var latency sql.NullFloat64
+		var jitter sql.NullFloat64
+		var throughput sql.NullFloat64
+
+		if err := rows.Scan(&targetIDFromDB, &latency, &jitter, &throughput); err != nil {
+			log.Println("[ROW SCAN ERROR]", err)
 			return nil, err
 		}
+
+		r := AttemptResult{
+			TargetID:       targetIDFromDB.Int64,
+			LatencyMs:      nullToZero(latency),
+			JitterMs:       nullToZero(jitter),
+			ThroughputKbps: nullToZero(throughput),
+		}
+
 		results = append(results, r)
 	}
 
+	log.Printf("[DB SUCCESS] Found %d attempts for test_id = %d and target_id = %d", len(results), testID, targetID)
 	return results, nil
 }
+
+func GetAllTargetIdsFromAttemptResults(db *sql.DB, testID int64) ([]int64, error) {
+	query := `SELECT DISTINCT target_id FROM attempt_results WHERE test_id = $1`
+	rows, err := db.Query(query, testID)
+	if err != nil {
+		log.Println("[DB QUERY ERROR]", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var targetIds []int64
+	for rows.Next() {
+		var tid int64
+		if err := rows.Scan(&tid); err != nil {
+			log.Println("[ROW SCAN ERROR]", err)
+			return nil, err
+		}
+		targetIds = append(targetIds, tid)
+	}
+	log.Printf("[DB SUCCESS] Found %d distinct target_id(s) for test_id = %d", len(targetIds), testID)
+	return targetIds, nil
+}
+
 
 
 // Agent_List
@@ -797,34 +915,36 @@ func deleteThresholdFromDB(db *sql.DB, thresholdID int64) error {
 	return nil
 }
 
-// recharge tout les test
 func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	query := `
-			SELECT 
-			t."Id",
-			t.test_name,
-			t.test_type,
-			t.creation_date,
-			t.test_duration::text,
-			sa."Name" AS source_agent,
-			ta."Name" AS target_agent,
-			th."Name" AS threshold_name,
-			CASE
-				WHEN th."avg_status" THEN th."avg"
-				WHEN th."min_status" THEN th."min"
-				WHEN th."max_status" THEN th."max"
-				ELSE NULL
-			END AS threshold_value,
-			t."In_progress",
-			t."completed",
-			t."failed",
-			t."Error"
-		FROM test t
-		JOIN "Agent_List" sa ON t.source_id = sa."id"
-		JOIN "Agent_List" ta ON t.target_id = ta."id"
-		LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
+	SELECT 
+		t."Id",
+		t.test_name,
+		t.test_type,
+		t.creation_date,
+		t.test_duration::text,
+		sa."Name" AS source_agent,
+		STRING_AGG(al."Name", ', ') AS target_agent,
+		STRING_AGG(tt.target_id::text, ',') AS target_ids,  -- Ajout pour récupérer les target_id
+		th."Name" AS threshold_name,
+		CASE
+			WHEN th."avg_status" THEN th."avg"
+			WHEN th."min_status" THEN th."min"
+			WHEN th."max_status" THEN th."max"
+			ELSE NULL
+		END AS threshold_value,
+		t."In_progress",
+		t."completed",
+		t."failed",
+		t."Error"
+	FROM test t
+	LEFT JOIN "Agent_List" sa ON t.source_id = sa."id"
+	LEFT JOIN test_targets tt ON tt.test_id = t."Id"
+	LEFT JOIN "Agent_List" al ON tt.target_id = al."id"
+	LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
+	GROUP BY t."Id", t.test_name, t.test_type, t.creation_date, t.test_duration, sa."Name", th."Name", th."avg_status", th."avg", th."min_status", th."min", th."max_status", th."max", t."In_progress", t."completed", t."failed", t."Error"
+	`
 
-`
 	log.Println("Exécution de la requête SQL pour charger les tests...")
 	rows, err := db.Query(query)
 	if err != nil {
@@ -837,6 +957,9 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 
 	for rows.Next() {
 		var test DisplayedTest
+		var targetAgent sql.NullString
+		var targetIDsRaw sql.NullString  // Pour récupérer les target_id en brut
+
 		log.Println("🧪 Tentative de Scan dans LoadAllTestsSummary")
 		err := rows.Scan(
 			&test.TestID,
@@ -845,7 +968,8 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 			&test.CreationDate,
 			&test.TestDuration,
 			&test.SourceAgent,
-			&test.TargetAgent,
+			&targetAgent,
+			&targetIDsRaw,  // Ajouté ici
 			&test.ThresholdName,
 			&test.ThresholdValue,
 			&test.InProgress,
@@ -859,6 +983,56 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 			return nil, fmt.Errorf("échec lecture ligne : %v", err)
 		}
 
+		if targetAgent.Valid {
+			test.TargetAgent = targetAgent.String
+		} else {
+			// Requête secondaire si targetAgent est NULL
+			targetRows, err := db.Query(`
+				SELECT al."Name"
+				FROM test_targets tt
+				LEFT JOIN "Agent_List" al ON al."id" = tt.target_id
+				WHERE tt.test_id = $1
+			`, test.TestID)
+
+			if err != nil {
+				log.Printf("❌ Erreur récupération targets secondaires : %v", err)
+				return nil, fmt.Errorf("échec récupération targets secondaires : %v", err)
+			}
+
+			var names []string
+			for targetRows.Next() {
+				var name sql.NullString
+				if err := targetRows.Scan(&name); err == nil && name.Valid {
+					names = append(names, name.String)
+				}
+			}
+			targetRows.Close()
+
+			if len(names) > 0 {
+				test.TargetAgent = strings.Join(names, ", ")
+			} else {
+				test.TargetAgent = "<aucun agent>"
+			}
+		}
+
+		// Parse target_ids en slice d'int
+		if targetIDsRaw.Valid {
+			idStrings := strings.Split(targetIDsRaw.String, ",")
+			for _, idStr := range idStrings {
+				idStr = strings.TrimSpace(idStr)
+				if idStr == "" {
+					continue
+				}
+				id, err := strconv.Atoi(idStr)
+				if err == nil {
+					test.TargetIDs = append(test.TargetIDs, id)
+				} else {
+					log.Printf("⚠️ Ignoré target_id non valide: %q", idStr)
+				}
+			}
+		}
+
+		// Définir le statut
 		switch {
 		case test.InProgress:
 			test.Status = "In_progress"
@@ -880,37 +1054,66 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 	return results, nil
 }
 
+
+
+
 func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
 	log.Printf("📥 Appel GetTestDetailsByID avec testID = %d", id)
 
-	query := `
-        SELECT
-            t."Id",
-            t.test_name,
-            CASE
-                WHEN t."In_progress" THEN 'in_progress'
-                WHEN t."completed" THEN 'completed'
-                WHEN t."failed" THEN 'failed'
-                WHEN t."Error" THEN 'error'
-                ELSE 'unknown'
-            END AS status,
-            t.creation_date,
-            t.test_duration,
-            sa."Name" AS source_agent,
-            ta."Name" AS target_agent,
-            th."Name" AS threshold_name,
-            CASE
-                WHEN th."avg_status" THEN th."avg"
-                WHEN th."min_status" THEN th."min"
-                WHEN th."max_status" THEN th."max"
-                ELSE NULL
-            END AS threshold_value
-        FROM test t
-        LEFT JOIN "Agent_List" sa ON t.source_id = sa.id
-        LEFT JOIN "Agent_List" ta ON t.target_id = ta.id
-        LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
-        WHERE t."Id" = $1
-    `
+	 query := `
+SELECT
+    t."Id",
+    t.test_name,
+    CASE
+        WHEN t."In_progress" THEN 'in_progress'
+        WHEN t."completed" THEN 'completed'
+        WHEN t."failed" THEN 'failed'
+        WHEN t."Error" THEN 'error'
+        ELSE 'unknown'
+    END AS status,
+    t.creation_date,
+    t.test_duration,
+    sa."Name" AS source_agent,
+
+    -- 🧠 Agent cible principal : soit depuis test.target_id, soit depuis test_targets
+    COALESCE(
+        (SELECT a."Name"
+         FROM "Agent_List" a
+         WHERE a.id = t.target_id
+         LIMIT 1),
+         
+        (SELECT string_agg(a2."Name", ', ')
+         FROM test_targets tt
+         JOIN "Agent_List" a2 ON tt.target_id = a2.id
+         WHERE tt.test_id = t."Id")
+    ) AS target_agent,
+
+    th."Name" AS threshold_name,
+    CASE
+        WHEN th."avg_status" THEN th."avg"
+        WHEN th."min_status" THEN th."min"
+        WHEN th."max_status" THEN th."max"
+        ELSE NULL
+    END AS threshold_value,
+    CASE
+        WHEN th."avg_status" THEN 'avg'
+        WHEN th."min_status" THEN 'min'
+        WHEN th."max_status" THEN 'max'
+        ELSE NULL
+    END AS threshold_type,
+    CASE
+        WHEN th."avg_status" THEN th."avg_opr"
+        WHEN th."min_status" THEN th."min_opr"
+        WHEN th."max_status" THEN th."max_opr"
+        ELSE NULL
+    END AS threshold_operator,
+    th.selected_metric 
+FROM test t
+LEFT JOIN "Agent_List" sa ON t.source_id = sa.id
+LEFT JOIN "Threshold" th ON th."ID" = t.threshold_id
+WHERE t."Id" = $1
+`
+
 
 	var details TestDetails
 	row := db.QueryRow(query, id)
@@ -924,7 +1127,11 @@ func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
 		&details.TargetAgent,
 		&details.ThresholdName,
 		&details.ThresholdValue,
+		&details.ThresholdType,     // ✅ doit venir AVANT
+		&details.ThresholdOperator, // ✅ doit venir APRÈS
+		&details.SelectedMetric,    // ✅ doit être DERNIER comme dans le SELECT
 	)
+
 
 	if err == sql.ErrNoRows {
 		log.Printf("⚠️ Aucun résultat trouvé pour le test ID=%d", id)
@@ -938,8 +1145,7 @@ func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
 	return &details, nil
 }
 
-
-////****************************************/////////////
+// //****************************************/////////////
 func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, error) {
 	log.Printf("➡️ Début du chargement de la configuration complète du test ID=%d", testID)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1141,135 +1347,99 @@ func LoadFullTestConfiguration(db *sql.DB, testID int) (*FullTestConfiguration, 
 	return &config, nil
 }
 
-
 func LoadFullTGroupTest(db *sql.DB, testID int) (*FullTestConfiguration, error) {
-    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-    defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-    var config FullTestConfiguration
-    var rawDuration string
+	var config FullTestConfiguration
+	var rawDuration string
 
-    // 🔍 Étape 1 : Charger la configuration générale du test
-    query := `SELECT t."Id", t.test_name, t.test_type, t.test_duration::text, t.number_of_agents, t.source_id, sa."Address", sa."Port", t.profile_id
+	// 🔍 Étape 1 : Charger la configuration générale du test
+	query := `SELECT t."Id", t.test_name, t.test_type, t.test_duration::text, t.number_of_agents, t.source_id, sa."Address", sa."Port", t.profile_id
               FROM test t
               JOIN "Agent_List" sa ON t.source_id = sa.id
               WHERE t."Id" = $1`
 
-    err := db.QueryRowContext(ctx, query, testID).Scan(
-        &config.TestID, &config.Name, &config.TestType, &rawDuration,
-        &config.NumberOfAgents, &config.SourceID, &config.SourceIP,
-        &config.SourcePort, &config.ProfileID,
-    )
-    if err != nil {
-        return nil, err
-    }
+	err := db.QueryRowContext(ctx, query, testID).Scan(
+		&config.TestID, &config.Name, &config.TestType, &rawDuration,
+		&config.NumberOfAgents, &config.SourceID, &config.SourceIP,
+		&config.SourcePort, &config.ProfileID,
+	)
+	if err != nil {
+		return nil, err
+	}
 
-    log.Printf("📥 Test ID=%d chargé. Source: %s:%d, ProfileID=%d", config.TestID, config.SourceIP, config.SourcePort, config.ProfileID)
+	log.Printf("📥 Test ID=%d chargé. Source: %s:%d, ProfileID=%d", config.TestID, config.SourceIP, config.SourcePort, config.ProfileID)
 
-    config.Duration, err = ParsePGInterval(rawDuration)
-    if err != nil {
-        return nil, err
-    }
+	config.Duration, err = ParsePGInterval(rawDuration)
+	if err != nil {
+		return nil, err
+	}
 
-    // 🔍 Étape 2 : Récupérer les IDs des agents cibles
-    rows, err := db.QueryContext(ctx, `SELECT target_id FROM test_targets WHERE test_id = $1`, testID)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
+	// 🔍 Étape 2 : Récupérer les IDs des agents cibles
+	rows, err := db.QueryContext(ctx, `SELECT target_id FROM test_targets WHERE test_id = $1`, testID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-    var targetIDs []int
-    for rows.Next() {
-        var id int
-        if err := rows.Scan(&id); err != nil {
-            return nil, err
-        }
-        targetIDs = append(targetIDs, id)
-    }
-    config.TargetAgentIDs = targetIDs
+	var targetIDs []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		targetIDs = append(targetIDs, id)
+	}
+	config.TargetAgentIDs = targetIDs
 
-    log.Printf("🎯 TargetAgentIDs récupérés : %v", targetIDs)
+	log.Printf("🎯 TargetAgentIDs récupérés : %v", targetIDs)
 
-    // 🔍 Étape 3 : Récupérer les détails (IP, port) de chaque agent cible
-    if len(targetIDs) > 0 {
-        log.Printf("🔍 Exécution requête récupération détails agents cibles avec targetIDs via pq.Array")
+	// 🔍 Étape 3 : Récupérer les détails (IP, port) de chaque agent cible
+	if len(targetIDs) > 0 {
+		log.Printf("🔍 Exécution requête récupération détails agents cibles avec targetIDs via pq.Array")
 
-        targetQuery := `SELECT id, "Address", "Port" FROM "Agent_List" WHERE id = ANY($1)`
-        targetRows, err := db.QueryContext(ctx, targetQuery, pq.Array(targetIDs))
-        if err != nil {
-            log.Printf("❌ Erreur récupération détails agents : %v", err)
-            return nil, err
-        }
-        defer targetRows.Close()
+		targetQuery := `SELECT id, "Address", "Port" FROM "Agent_List" WHERE id = ANY($1)`
+		targetRows, err := db.QueryContext(ctx, targetQuery, pq.Array(targetIDs))
+		if err != nil {
+			log.Printf("❌ Erreur récupération détails agents : %v", err)
+			return nil, err
+		}
+		defer targetRows.Close()
 
-        var targetAgents []AgentInfo
-        for targetRows.Next() {
-            var a AgentInfo
-            if err := targetRows.Scan(&a.ID, &a.IP, &a.Port); err != nil {
-                log.Printf("❌ Erreur scan agent : %v", err)
-                return nil, err
-            }
-            log.Printf("📡 Agent cible ID=%d : IP=%s, Port=%d", a.ID, a.IP, a.Port)
-            targetAgents = append(targetAgents, a)
-        }
-        log.Printf("✅ Total agents cibles récupérés : %d", len(targetAgents))
+		var targetAgents []AgentInfo
+		for targetRows.Next() {
+			var a AgentInfo
+			if err := targetRows.Scan(&a.ID, &a.IP, &a.Port); err != nil {
+				log.Printf("❌ Erreur scan agent : %v", err)
+				return nil, err
+			}
+			log.Printf("📡 Agent cible ID=%d : IP=%s, Port=%d", a.ID, a.IP, a.Port)
+			targetAgents = append(targetAgents, a)
+		}
+		log.Printf("✅ Total agents cibles récupérés : %d", len(targetAgents))
 
-        config.TargetAgents = targetAgents
-    } else {
-        log.Printf("⚠️ Aucun agent cible trouvé pour test ID=%d", testID)
-    }
+		config.TargetAgents = targetAgents
+	} else {
+		log.Printf("⚠️ Aucun agent cible trouvé pour test ID=%d", testID)
+	}
 
-    // 🔍 Étape 4 : Charger le profil du test
-    profileQuery := `SELECT "ID", "packet_size", "time_between_attempts" FROM "test_profile" WHERE "ID" = $1`
-    var p Profile
-    var rawInterval string
-    err = db.QueryRowContext(ctx, profileQuery, config.ProfileID).Scan(&p.ID, &p.PacketSize, &rawInterval)
-    if err != nil {
-        return nil, err
-    }
+	// 🔍 Étape 4 : Charger le profil du test
+	profileQuery := `SELECT "ID", "packet_size", "time_between_attempts" FROM "test_profile" WHERE "ID" = $1`
+	var p Profile
+	var rawInterval string
+	err = db.QueryRowContext(ctx, profileQuery, config.ProfileID).Scan(&p.ID, &p.PacketSize, &rawInterval)
+	if err != nil {
+		return nil, err
+	}
 
-    p.SendingInterval, err = ParsePGInterval(rawInterval)
-    if err != nil {
-        return nil, err
-    }
-    config.Profile = &p
+	p.SendingInterval, err = ParsePGInterval(rawInterval)
+	if err != nil {
+		return nil, err
+	}
+	config.Profile = &p
 
-    log.Printf("✅ Profil chargé : ID=%d, PacketSize=%d, Interval=%v", p.ID, p.PacketSize, p.SendingInterval)
+	log.Printf("✅ Profil chargé : ID=%d, PacketSize=%d, Interval=%v", p.ID, p.PacketSize, p.SendingInterval)
 
-    return &config, nil
+	return &config, nil
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

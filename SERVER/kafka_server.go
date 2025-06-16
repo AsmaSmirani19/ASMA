@@ -49,12 +49,23 @@ func TriggerTestToKafka(db *sql.DB, testID int) error {
 		reflectors = append(reflectors, fmt.Sprintf("%s:%d", agent.IP, agent.Port))
 	}
 
+
+	var targets []Target
+	for _, agent := range config.TargetAgents {
+		targets = append(targets, Target{
+			ID:   agent.ID,
+			IP:   agent.IP,
+			Port: agent.Port,
+		})
+	}
+	
 	// Construire le message à envoyer
 	msg := TestKafkaMessage{
 		TestID:     config.TestID,
 		TestType:   config.TestType,
 		Sender:     fmt.Sprintf("%s:%d", config.SourceIP, config.SourcePort),
 		Reflectors: reflectors,
+		Targets:  targets,
 		Profile:    config.Profile,
 	}
 
@@ -75,10 +86,9 @@ func TriggerTestToKafka(db *sql.DB, testID int) error {
 	return nil
 }
 
-
-
 type TestResult1 struct {
     TestID         int     `json:"test_id"`
+	TargetID       int64   `json:"target_id"` 
     LatencyMs      float64 `json:"latency_ms"`
     JitterMs       float64 `json:"jitter_ms"`
     ThroughputKbps float64 `json:"throughput_kbps"`
@@ -100,7 +110,7 @@ func ConsumeTestResults(ctx context.Context, brokers []string, topic string, gro
 
     log.Printf("👂 Démarrage de la consommation Kafka sur le topic %s", topic)
 
-    for {
+     for {
         m, err := r.ReadMessage(ctx)
         if err != nil {
             log.Printf("❌ Erreur lecture message Kafka : %v", err)
@@ -120,10 +130,12 @@ func ConsumeTestResults(ctx context.Context, brokers []string, topic string, gro
         }
 
        // Sauvegarde dans la base
-        if err := SaveAttemptResult(db, int64(result.TestID), result.LatencyMs, result.JitterMs, result.ThroughputKbps); err != nil {
-            log.Printf("❌ Erreur sauvegarde en base : %v", err)
-        } else {
-            log.Printf("✅ Résultat TestID %d sauvegardé en base", result.TestID)
-        }
+			if err := SaveAttemptResult(db, int64(result.TestID), result.TargetID, result.LatencyMs, result.JitterMs, result.ThroughputKbps); err != nil {
+		log.Printf("❌ Erreur sauvegarde en base : %v", err)
+	} else {
+		log.Printf("✅ Résultat TestID %d (target %d) sauvegardé en base", result.TestID, result.TargetID)
+	}
+
+
     }
 }
