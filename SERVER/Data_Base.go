@@ -1055,8 +1055,6 @@ func LoadAllTestsSummary(db *sql.DB) ([]DisplayedTest, error) {
 }
 
 
-
-
 func GetTestDetailsByID(db *sql.DB, id int) (*TestDetails, error) {
 	log.Printf("📥 Appel GetTestDetailsByID avec testID = %d", id)
 
@@ -1131,6 +1129,8 @@ WHERE t."Id" = $1
 		&details.ThresholdOperator, // ✅ doit venir APRÈS
 		&details.SelectedMetric,    // ✅ doit être DERNIER comme dans le SELECT
 	)
+	log.Printf("📊 Seuil récupéré : value=%v, type=%v, operator=%v, metric=%v", 
+	details.ThresholdValue, details.ThresholdType, details.ThresholdOperator, details.SelectedMetric)
 
 
 	if err == sql.ErrNoRows {

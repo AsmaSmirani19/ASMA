@@ -2,6 +2,7 @@ package server
 
 import (
 	"time"	
+	"database/sql"
 )
 
 
@@ -49,20 +50,63 @@ type DisplayedTest struct {
 }
 		
 type TestDetails struct {
-    TestID         int     `json:"test_id"`
-    TestName       string  `json:"testName"`
-    Status         string  `json:"status"`
-    CreationDate   string  `json:"creationDate"`
-    TestDuration   string  `json:"testDuration"`
-    SourceAgent    string  `json:"sourceAgent"`
-    TargetAgent    string  `json:"targetAgent"`
-    ThresholdName  string  `json:"thresholdName"`   
-    ThresholdValue float64 `json:"thresholdValue"` 
-	SelectedMetric string  `json:"selectedMetric"` 
-	ThresholdType    string  `json:"thresholdType"`
-    ThresholdOperator string `json:"thresholdOperator"`
+    TestID            int            `json:"test_id"`
+    TestName          string         `json:"testName"`
+    Status            string         `json:"status"`
+    CreationDate      string         `json:"creationDate"`
+    TestDuration      string         `json:"testDuration"`
+    SourceAgent       string         `json:"sourceAgent"`
+    TargetAgent       string         `json:"targetAgent"`
+    ThresholdName     string         `json:"thresholdName"`
+    ThresholdValue    sql.NullFloat64 `json:"thresholdValue"`
+    SelectedMetric    string         `json:"selectedMetric"`
+    ThresholdType     sql.NullString  `json:"thresholdType"`
+    ThresholdOperator sql.NullString  `json:"thresholdOperator"`
 }
 
+type TestDetailsDTO struct {
+    TestID            int     `json:"test_id"`
+    TestName          string  `json:"testName"`
+    Status            string  `json:"status"`
+    CreationDate      string  `json:"creationDate"`
+    TestDuration      string  `json:"testDuration"`
+    SourceAgent       string  `json:"sourceAgent"`
+    TargetAgent       string  `json:"targetAgent"`
+    ThresholdName     string  `json:"thresholdName"`
+    ThresholdValue    float64 `json:"thresholdValue"`
+    SelectedMetric    string  `json:"selectedMetric"`
+    ThresholdType     string  `json:"thresholdType"`
+    ThresholdOperator string  `json:"thresholdOperator"`
+}
+
+func ConvertToTestDetailsDTO(t TestDetails) TestDetailsDTO {
+    dto := TestDetailsDTO{
+        TestID:         t.TestID,
+        TestName:       t.TestName,
+        Status:         t.Status,
+        CreationDate:   t.CreationDate,
+        TestDuration:   t.TestDuration,
+        SourceAgent:    t.SourceAgent,
+        TargetAgent:    t.TargetAgent,
+        ThresholdName:  t.ThresholdName,
+        SelectedMetric: t.SelectedMetric,
+    }
+
+    // Vérifie les valeurs valides
+    if t.ThresholdValue.Valid {
+        dto.ThresholdValue = t.ThresholdValue.Float64
+    }
+
+    if t.ThresholdType.Valid {
+        dto.ThresholdType = t.ThresholdType.String
+    }
+
+    if t.ThresholdOperator.Valid {
+        dto.ThresholdOperator = t.ThresholdOperator.String
+    }
+
+    return dto
+}
 
 /////////////////////
 type TestKafkaMessage struct {

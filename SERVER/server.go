@@ -83,13 +83,13 @@ func Start(db *sql.DB) {
 	http.HandleFunc("/api/threshold", handleThreshold(db))
 	http.HandleFunc("/api/tests", handleTests(db))
 	http.HandleFunc("/api/trigger-test", triggerTestHandler(db))
-	http.HandleFunc("/api/test-results", handleGetAllTests)
+	http.HandleFunc("/api/test-results/targets/", handleGetTargetIdsByTestID(db))
 	http.HandleFunc("/api/test-results/", handleGetTestByID)
+	http.HandleFunc("/api/test-results", handleGetAllTests)
+	
 	http.HandleFunc("/api/planned-test", handlePlannedTest(db))
 	http.HandleFunc("/api/test-results_id", getTestResultsHandler(db))
 	http.HandleFunc("/api/qos-results/", handleGetQoSResultsByTestID)
-	http.HandleFunc("/api/test-results/targets/", handleGetTargetIdsByTestID(db))
-
 
 
 

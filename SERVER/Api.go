@@ -791,6 +791,9 @@ func handleGetAllTests(w http.ResponseWriter, r *http.Request) {
 
 
 func handleGetTestByID(w http.ResponseWriter, r *http.Request) {
+	log.Println("👉 handleGetTestByID appelé avec URL:", r.URL.Path)
+	log.Printf("📥 Requête HTTP reçue pour test ID = %s", r.URL.Query().Get("id"))
+
     if r.Method != http.MethodGet {
         http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
         return
@@ -822,8 +825,10 @@ func handleGetTestByID(w http.ResponseWriter, r *http.Request) {
     }
 
     log.Printf("✅ Test trouvé : %+v", testDetails)
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(testDetails)
+	dto := ConvertToTestDetailsDTO(*testDetails)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dto)
+
 }
 
 func handlePlannedTest(db *sql.DB) http.HandlerFunc {
