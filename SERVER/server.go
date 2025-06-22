@@ -98,6 +98,13 @@ func Start(db *sql.DB) {
 	//http.HandleFunc("/ws/health", healthWebSocketHandler)
 
 
+	//Dashboad 
+	http.HandleFunc("/api/test-stats", GetTestStatsHandler(db))
+	http.HandleFunc("/api/agents/status", GetAgentsStatusHandler(db))
+
+
+
+
 	// 🌍 4. Middleware CORS
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{
